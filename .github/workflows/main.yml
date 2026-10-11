@@ -774,9 +774,9 @@ jobs:
           public class MainActivity extends Activity {
               static final int HOME = 0, SETTINGS = 1, BG = 2, BEHAVIOR = 3, LANG = 4, PICKER = 5,
                       DOCK = 6, ICON = 8, MOCK = 9, FOLDER = 10, BACKUP = 11, RESTORE = 12,
-                      FONT = 13, FGRP = 14, FPICK = 15, DOCKBG = 16, HOMEPG = 17, HFBG = 18, MENUBG = 19;
+                      FONT = 13, FGRP = 14, FPICK = 15, DOCKBG = 16, HPAGE = 17, HFBG = 18, MBG = 19;
               static final int DLG = 0xFFEEEEEE;
-              static final int REQ_IMG = 77, REQ_MIMG = 78, REQ_HIMG = 79;
+              static final int REQ_IMG = 77, REQ_FIMG = 78, REQ_MIMG = 79;
 
               static class AppItem { String label, pkg; Drawable icon; }
 
@@ -871,6 +871,93 @@ jobs:
                   @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
               }
 
+              // frame of the home page: like the immersive folder panel, with an optional picture and optional 3D edges
+              static class FrameDrawable extends Drawable {
+                  Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  Paint ip = new Paint(Paint.FILTER_BITMAP_FLAG);
+                  Path cl = new Path();
+                  Matrix mx = new Matrix();
+                  int color, fade;
+                  boolean d3;
+                  float r, st, zoom, px, py;
+                  Bitmap src;
+                  FrameDrawable(int color, boolean d3, float r, float st, Bitmap src, float zoom, float px, float py, int fade) {
+                      this.color = color;
+                      this.d3 = d3;
+                      this.r = r;
+                      this.st = st;
+                      this.src = src;
+                      this.zoom = zoom;
+                      this.px = px;
+                      this.py = py;
+                      this.fade = fade;
+                  }
+                  @Override
+                  public void draw(Canvas c) {
+                      Rect b = getBounds();
+                      float L = b.left, T = b.top, R = b.right, B = b.bottom;
+                      float w = R - L, h = B - T;
+                      if (w < 4 || h < 4) return;
+                      float rr = Math.min(r, Math.min(w, h) / 2f);
+                      RectF rf = new RectF(L, T, R, B);
+                      cl.reset();
+                      cl.addRoundRect(rf, rr, rr, Path.Direction.CW);
+                      pt.setShader(null);
+                      pt.setStyle(Paint.Style.FILL);
+                      c.save();
+                      c.clipPath(cl);
+                      if (src != null) {
+                          float s = Math.max(w / src.getWidth(), h / src.getHeight()) * zoom;
+                          float iw = src.getWidth() * s, ih = src.getHeight() * s;
+                          mx.reset();
+                          mx.postScale(s, s);
+                          mx.postTranslate(L + (w - iw) * px, T + (h - ih) * py);
+                          c.drawBitmap(src, mx, ip);
+                          if (fade > 0) c.drawColor(((fade * 255 / 100) << 24) | (color & 0x00FFFFFF));
+                      } else {
+                          pt.setColor(color);
+                          c.drawRect(rf, pt);
+                      }
+                      if (d3) {
+                          float sh = Math.min(h / 3f, st * 12f);
+                          pt.setColor(0xFFFFFFFF);
+                          pt.setShader(new LinearGradient(0, T, 0, T + sh, 0x38FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
+                          c.drawRect(L, T, R, T + sh, pt);
+                          pt.setShader(new LinearGradient(0, B - sh, 0, B, 0x00000000, 0x40000000, Shader.TileMode.CLAMP));
+                          c.drawRect(L, B - sh, R, B, pt);
+                          pt.setShader(null);
+                      }
+                      c.restore();
+                      pt.setStyle(Paint.Style.STROKE);
+                      if (d3) {
+                          float h1 = st / 2f;
+                          pt.setStrokeWidth(st);
+                          pt.setShader(new LinearGradient(L, T, R, B,
+                                  new int[]{0xD0FFFFFF, 0x30FFFFFF, 0x30000000, 0xD0000000},
+                                  new float[]{0f, 0.45f, 0.55f, 1f}, Shader.TileMode.CLAMP));
+                          c.drawRoundRect(new RectF(L + h1, T + h1, R - h1, B - h1), rr - h1, rr - h1, pt);
+                          float w2 = Math.max(1f, st / 3f);
+                          float o = st + w2 / 2f;
+                          pt.setStrokeWidth(w2);
+                          pt.setShader(new LinearGradient(L, T, R, B,
+                                  new int[]{0x70000000, 0x00000000, 0x00FFFFFF, 0x60FFFFFF},
+                                  new float[]{0f, 0.45f, 0.55f, 1f}, Shader.TileMode.CLAMP));
+                          c.drawRoundRect(new RectF(L + o, T + o, R - o, B - o), rr - o, rr - o, pt);
+                          pt.setShader(null);
+                      } else {
+                          float w2 = Math.max(1f, st / 3f);
+                          float h1 = w2 / 2f;
+                          pt.setStrokeWidth(w2);
+                          pt.setColor(0x33FFFFFF);
+                          c.drawRoundRect(new RectF(L + h1, T + h1, R - h1, B - h1), rr - h1, rr - h1, pt);
+                      }
+                      pt.setStyle(Paint.Style.FILL);
+                  }
+                  @Override public void setAlpha(int a) { }
+                  @Override public void setColorFilter(ColorFilter f) { }
+                  @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+              }
+
               // a control of the immersive folder that flies to the top bar
               static class Ctl {
                   View v;
@@ -878,85 +965,13 @@ jobs:
                   float sx, sy, ex, ey, s0;
               }
 
-              // the home page frame: color + optional picture + flat or 3D edges
-              static class FrameView extends View {
-                  Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
-                  Paint ip = new Paint(Paint.FILTER_BITMAP_FLAG);
-                  Path cp = new Path();
-                  RectF rf = new RectF();
-                  Matrix mx = new Matrix();
-                  Bitmap src;
-                  int color = 0x3A28282C, fade = 0, zoom = 100, px = 50, py = 50;
-                  boolean d3;
-                  float rad, bw;
-                  FrameView(Context c) { super(c); }
-                  void cfg(Bitmap s, int col, int fd, int z, int x, int y, boolean three, float r, float b) {
-                      src = s; color = col; fade = fd; zoom = z; px = x; py = y; d3 = three; rad = r; bw = b;
-                      invalidate();
-                  }
-                  @Override
-                  protected void onDraw(Canvas c) {
-                      float w = getWidth(), h = getHeight();
-                      if (w < 2 || h < 2) return;
-                      rf.set(0, 0, w, h);
-                      cp.reset();
-                      cp.addRoundRect(rf, rad, rad, Path.Direction.CW);
-                      c.save();
-                      c.clipPath(cp);
-                      pt.setShader(null);
-                      pt.setStyle(Paint.Style.FILL);
-                      pt.setColor(color);
-                      c.drawRect(rf, pt);
-                      if (src != null) {
-                          float s = Math.max(w / src.getWidth(), h / src.getHeight()) * zoom / 100f;
-                          float iw = src.getWidth() * s, ih = src.getHeight() * s;
-                          mx.reset();
-                          mx.postScale(s, s);
-                          mx.postTranslate((w - iw) * px / 100f, (h - ih) * py / 100f);
-                          c.drawBitmap(src, mx, ip);
-                          if (fade > 0) {
-                              pt.setColor(((fade * 255 / 100) << 24) | (color & 0x00FFFFFF));
-                              c.drawRect(rf, pt);
-                          }
-                      }
-                      if (d3) {
-                          pt.setStyle(Paint.Style.FILL);
-                          pt.setShader(new LinearGradient(0, 0, 0, h * 0.4f, 0x2EFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
-                          c.drawRect(0, 0, w, h * 0.4f, pt);
-                          pt.setShader(new LinearGradient(0, h * 0.7f, 0, h, 0x00000000, 0x40000000, Shader.TileMode.CLAMP));
-                          c.drawRect(0, h * 0.7f, w, h, pt);
-                          pt.setStyle(Paint.Style.STROKE);
-                          pt.setStrokeWidth(bw * 2f);
-                          pt.setShader(new LinearGradient(0, 0, w, h,
-                                  new int[]{0xCCFFFFFF, 0x33FFFFFF, 0x33000000, 0xCC000000},
-                                  new float[]{0f, 0.45f, 0.55f, 1f}, Shader.TileMode.CLAMP));
-                          c.drawRoundRect(rf, rad, rad, pt);
-                          rf.inset(bw, bw);
-                          pt.setStrokeWidth(bw);
-                          pt.setShader(new LinearGradient(0, 0, w, h,
-                                  new int[]{0x55000000, 0x00000000, 0x00FFFFFF, 0x55FFFFFF},
-                                  new float[]{0f, 0.45f, 0.55f, 1f}, Shader.TileMode.CLAMP));
-                          float ir = Math.max(0f, rad - bw);
-                          c.drawRoundRect(rf, ir, ir, pt);
-                      } else {
-                          pt.setShader(null);
-                          pt.setStyle(Paint.Style.STROKE);
-                          pt.setStrokeWidth(2f * Math.max(1f, bw / 3f));
-                          pt.setColor(0x33FFFFFF);
-                          c.drawRoundRect(rf, rad, rad, pt);
-                      }
-                      pt.setShader(null);
-                      c.restore();
-                  }
-              }
-
               SharedPreferences sp;
-              int bg, menuBg, fgc, page = HOME, dockPage1 = 0, shownPage = -1, openCx, openCy, openW = 100, openH = 100;
+              int bg, fgc, page = HOME, dockPage1 = 0, shownPage = -1, openCx, openCy, openW = 100, openH = 100;
               boolean fa, plusOpen = false, editName = false, folderSettings = false,
                       animFolder = false, animSettings = false, compact = false, dragFromDock = false,
                       closing = false, immersive = false;
-              View trashBtn, cancelBtn, plusMenuV, gridView, headV, dockBoxV, smallName;
-              View homeMenuV, homePlusV, countBarV, topLineV, menuRootV;
+              View trashBtn, cancelBtn, plusMenuV, gridView, headV, dockBoxV, smallName, frameV;
+              View homeMenuV, homePlusV, countBarV, topLineV;
               boolean menuHold = false;
               FrameLayout selLayer;
               View selBoxV, selSliderV;
@@ -973,7 +988,8 @@ jobs:
               FrameLayout ovLayer;
               List<View> folderCtl = new ArrayList<>();
               Map<TextView, Float> baseSz = new WeakHashMap<>();
-              Bitmap bgBmp, bgSrc, menuBmp, menuSrc, frameSrc;
+              Bitmap bgBmp, bgSrc;
+              Bitmap mbgBmp, mbgSrc, hfSrc;
               Consumer<Float> folderApply;
               String fGrp = "s", fLang = "fa";
               Map<String, Typeface> faceCache = new HashMap<>();
@@ -1012,8 +1028,9 @@ jobs:
                   sp = getSharedPreferences("l", 0);
                   fa = sp.getString("lang", "fa").equals("fa");
                   bg = sp.getInt("bg", colors[0]);
-                  menuBg = sp.getInt("mbg", bg);
                   loadBgImage();
+                  loadMenuImage();
+                  loadFrameImage();
                   applyWindowBg();
                   container = new FrameLayout(this);
                   setContentView(container);
@@ -1154,9 +1171,9 @@ jobs:
                       page = DOCK;
                       show();
                   } else if (page == HFBG) {
-                      page = HOMEPG;
+                      page = HPAGE;
                       show();
-                  } else if (page == MENUBG) {
+                  } else if (page == MBG) {
                       page = HOME;
                       show();
                   } else {
@@ -1189,36 +1206,76 @@ jobs:
                   nm.notify(1, n);
               }
 
-              // ================= background images (home "", menu "m", frame "h") =================
-              File bgFile(String p) { return new File(getFilesDir(), p + "bg_src.jpg"); }
-
-              Bitmap loadSrc(String p) {
-                  if (!sp.getBoolean(p + "bgImg", false)) return null;
+              // ================= background image =================
+              void loadBgImage() {
+                  bgBmp = null;
+                  bgSrc = null;
+                  if (!sp.getBoolean("bgImg", false)) return;
                   try {
-                      File fl = bgFile(p);
-                      if (!fl.exists() && p.isEmpty()) fl = new File(getFilesDir(), "bg.jpg");
+                      File fl = new File(getFilesDir(), "bg_src.jpg");
+                      if (!fl.exists()) fl = new File(getFilesDir(), "bg.jpg");
+                      if (fl.exists()) bgSrc = BitmapFactory.decodeFile(fl.getAbsolutePath());
+                  } catch (Throwable e) { }
+                  renderBg();
+              }
+
+              // draws the picture with zoom / position / fade into a screen-sized bitmap
+              void renderBg() {
+                  if (bgSrc == null) { bgBmp = null; return; }
+                  try {
+                      DisplayMetrics dm = getResources().getDisplayMetrics();
+                      int W = dm.widthPixels, H = dm.heightPixels;
+                      float zoom = sp.getInt("bgZoom", 100) / 100f;
+                      float px = sp.getInt("bgPx", 50) / 100f;
+                      float py = sp.getInt("bgPy", 50) / 100f;
+                      float s = Math.max(W / (float) bgSrc.getWidth(), H / (float) bgSrc.getHeight()) * zoom;
+                      float iw = bgSrc.getWidth() * s, ih = bgSrc.getHeight() * s;
+                      Bitmap out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
+                      Canvas cv = new Canvas(out);
+                      Matrix m = new Matrix();
+                      m.postScale(s, s);
+                      m.postTranslate((W - iw) * px, (H - ih) * py);
+                      cv.drawBitmap(bgSrc, m, new Paint(Paint.FILTER_BITMAP_FLAG));
+                      int fade = sp.getInt("bgFade", 0);
+                      if (fade > 0) cv.drawColor(((fade * 255 / 100) << 24) | (bg & 0x00FFFFFF));
+                      bgBmp = out;
+                  } catch (Throwable e) { }
+              }
+
+              void applyWindowBg() {
+                  if (bgBmp != null) getWindow().setBackgroundDrawable(new BitmapDrawable(getResources(), bgBmp));
+                  else getWindow().setBackgroundDrawable(new ColorDrawable(bg));
+              }
+
+              // ---- settings menu pages have their own background (color / picture), separate from the home page ----
+              boolean menuPage() { return page != HOME && page != PICKER; }
+
+              int mbg() { return sp.getInt("mBg", colors[0]); }
+
+              Drawable menuBgDrawable() {
+                  Drawable top = mbgBmp != null ? new BitmapDrawable(getResources(), mbgBmp) : new ColorDrawable(mbg());
+                  return new LayerDrawable(new Drawable[]{new ColorDrawable(0xFF000000), top});
+              }
+
+              // reads a saved picture when its switch ("pre"+"Img") is on
+              Bitmap loadSrc(String pre, String file) {
+                  if (!sp.getBoolean(pre + "Img", false)) return null;
+                  try {
+                      File fl = new File(getFilesDir(), file);
                       if (fl.exists()) return BitmapFactory.decodeFile(fl.getAbsolutePath());
                   } catch (Throwable e) { }
                   return null;
               }
 
-              void loadBgImage() {
-                  bgSrc = loadSrc("");
-                  menuSrc = loadSrc("m");
-                  frameSrc = loadSrc("h");
-                  renderBg();
-                  renderMenu();
-              }
-
-              // draws the picture with zoom / position / fade into a screen-sized bitmap
-              Bitmap renderImg(Bitmap src, String p, int base) {
+              // zoom / position / fade of a picture into a screen-sized bitmap
+              Bitmap renderImg(Bitmap src, String pre, int color) {
                   if (src == null) return null;
                   try {
                       DisplayMetrics dm = getResources().getDisplayMetrics();
                       int W = dm.widthPixels, H = dm.heightPixels;
-                      float zoom = sp.getInt(p + "bgZoom", 100) / 100f;
-                      float px = sp.getInt(p + "bgPx", 50) / 100f;
-                      float py = sp.getInt(p + "bgPy", 50) / 100f;
+                      float zoom = sp.getInt(pre + "Zoom", 100) / 100f;
+                      float px = sp.getInt(pre + "Px", 50) / 100f;
+                      float py = sp.getInt(pre + "Py", 50) / 100f;
                       float s = Math.max(W / (float) src.getWidth(), H / (float) src.getHeight()) * zoom;
                       float iw = src.getWidth() * s, ih = src.getHeight() * s;
                       Bitmap out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
@@ -1227,65 +1284,47 @@ jobs:
                       m.postScale(s, s);
                       m.postTranslate((W - iw) * px, (H - ih) * py);
                       cv.drawBitmap(src, m, new Paint(Paint.FILTER_BITMAP_FLAG));
-                      int fade = sp.getInt(p + "bgFade", 0);
-                      if (fade > 0) cv.drawColor(((fade * 255 / 100) << 24) | (base & 0x00FFFFFF));
+                      int fade = sp.getInt(pre + "Fade", 0);
+                      if (fade > 0) cv.drawColor(((fade * 255 / 100) << 24) | (color & 0x00FFFFFF));
                       return out;
                   } catch (Throwable e) { return null; }
               }
 
-              void renderBg() { bgBmp = renderImg(bgSrc, "", bg); }
-
-              void renderMenu() { menuBmp = renderImg(menuSrc, "m", menuBg); }
-
-              void applyWindowBg() {
-                  if (bgBmp != null) getWindow().setBackgroundDrawable(new BitmapDrawable(getResources(), bgBmp));
-                  else getWindow().setBackgroundDrawable(new ColorDrawable(bg));
+              void loadMenuImage() {
+                  mbgSrc = loadSrc("m", "menu_src.jpg");
+                  mbgBmp = renderImg(mbgSrc, "m", mbg());
               }
 
-              // pages that use the settings-menu background (not the home background)
-              boolean isMenuPage(int p) { return p != HOME && p != PICKER && p != BG; }
-
-              // page background: transparent when a picture is used (home) or when the page paints its own (menu)
-              int pbg() { return isMenuPage(page) ? 0 : (bgBmp != null ? 0 : bg); }
-
-              Drawable menuDrawable() {
-                  Drawable top = menuBmp != null ? new BitmapDrawable(getResources(), menuBmp)
-                          : new ColorDrawable(menuBg);
-                  return new LayerDrawable(new Drawable[]{new ColorDrawable(0xFF000000), top});
+              void loadFrameImage() {
+                  hfSrc = loadSrc("hf", "hf_src.jpg");
               }
 
-              void pickBgImage(String p) {
+              // page background: transparent when a picture is used (settings menu pages get theirs in show())
+              int pbg() { return menuPage() ? 0 : (bgBmp != null ? 0 : bg); }
+
+              void pickImg(int req) {
                   Intent i = new Intent(Intent.ACTION_GET_CONTENT);
                   i.setType("image/*");
-                  int rc = p.isEmpty() ? REQ_IMG : (p.equals("m") ? REQ_MIMG : REQ_HIMG);
                   try {
-                      startActivityForResult(Intent.createChooser(i, t("انتخاب عکس", "Choose image")), rc);
+                      startActivityForResult(Intent.createChooser(i, t("انتخاب عکس", "Choose image")), req);
                   } catch (Exception e) {
                       Toast.makeText(this, t("گالری پیدا نشد", "No gallery found"), Toast.LENGTH_SHORT).show();
                   }
               }
 
-              void removeBgImage(String p) {
-                  sp.edit().putBoolean(p + "bgImg", false).apply();
-                  if (p.isEmpty()) {
-                      bgBmp = null;
-                      bgSrc = null;
-                      applyWindowBg();
-                  } else if (p.equals("m")) {
-                      menuBmp = null;
-                      menuSrc = null;
-                  } else {
-                      frameSrc = null;
-                  }
+              void removeBgImage() {
+                  sp.edit().putBoolean("bgImg", false).apply();
+                  bgBmp = null;
+                  bgSrc = null;
+                  applyWindowBg();
                   show();
               }
 
               @Override
               protected void onActivityResult(int rc, int res, Intent data) {
                   super.onActivityResult(rc, res, data);
-                  if ((rc != REQ_IMG && rc != REQ_MIMG && rc != REQ_HIMG) || res != RESULT_OK
+                  if ((rc != REQ_IMG && rc != REQ_FIMG && rc != REQ_MIMG) || res != RESULT_OK
                           || data == null || data.getData() == null) return;
-                  String p = rc == REQ_IMG ? "" : (rc == REQ_MIMG ? "m" : "h");
                   try {
                       Uri u = data.getData();
                       BitmapFactory.Options o = new BitmapFactory.Options();
@@ -1301,23 +1340,28 @@ jobs:
                       Bitmap src = BitmapFactory.decodeStream(in2, null, o2);
                       in2.close();
                       if (src == null) throw new Exception("decode");
-                      FileOutputStream fo = new FileOutputStream(bgFile(p));
+                      String fn = rc == REQ_IMG ? "bg_src.jpg" : (rc == REQ_FIMG ? "hf_src.jpg" : "menu_src.jpg");
+                      FileOutputStream fo = new FileOutputStream(new File(getFilesDir(), fn));
                       src.compress(Bitmap.CompressFormat.JPEG, 92, fo);
                       fo.close();
-                      sp.edit().putBoolean(p + "bgImg", true).remove(p + "bgZoom").remove(p + "bgPx")
-                              .remove(p + "bgPy").remove(p + "bgFade").apply();
-                      if (p.isEmpty()) {
+                      if (rc == REQ_IMG) {
+                          sp.edit().putBoolean("bgImg", true).remove("bgZoom").remove("bgPx")
+                                  .remove("bgPy").remove("bgFade").apply();
                           bgSrc = src;
                           renderBg();
                           applyWindowBg();
                           page = BG;
-                      } else if (p.equals("m")) {
-                          menuSrc = src;
-                          renderMenu();
-                          page = MENUBG;
-                      } else {
-                          frameSrc = src;
+                      } else if (rc == REQ_FIMG) {
+                          sp.edit().putBoolean("hfImg", true).remove("hfZoom").remove("hfPx")
+                                  .remove("hfPy").remove("hfFade").apply();
+                          hfSrc = src;
                           page = HFBG;
+                      } else {
+                          sp.edit().putBoolean("mImg", true).remove("mZoom").remove("mPx")
+                                  .remove("mPy").remove("mFade").apply();
+                          mbgSrc = src;
+                          mbgBmp = renderImg(src, "m", mbg());
+                          page = MBG;
                       }
                       show();
                   } catch (Throwable e) {
@@ -1453,7 +1497,7 @@ jobs:
                   return Color.rgb(Color.red(c) * a / 255, Color.green(c) * a / 255, Color.blue(c) * a / 255);
               }
 
-              boolean light() { return isLight(solid(isMenuPage(page) ? menuBg : bg)); }
+              boolean light() { return isLight(solid(menuPage() ? mbg() : bg)); }
 
               String hex(int c) { return String.format("#%08X", c); }
 
@@ -1602,7 +1646,7 @@ jobs:
               }
 
               void topBtnMenu() {
-                  final AlertDialog[] dh = new AlertDialog[1];
+                  final AlertDialog[] dlg = new AlertDialog[1];
                   ScrollView sv = new ScrollView(this);
                   LinearLayout box = new LinearLayout(this);
                   box.setOrientation(LinearLayout.VERTICAL);
@@ -1623,10 +1667,10 @@ jobs:
                   box.addView(row(0xFFE91E63, "🎨", t("رنگ", "Color"), null, 0, DLG, x ->
                           cbox.setVisibility(cbox.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE)));
                   box.addView(cbox);
-                  box.addView(row(0xFF9C27B0, "🖌", t("رنگ منو", "Menu color"),
-                          t("رنگ و عکس پس‌زمینه صفحه تنظیمات", "Color and picture of the settings pages"), 0, DLG, x -> {
-                      page = MENUBG;
-                      if (dh[0] != null) dh[0].dismiss();
+                  // menu color: color, transparency and picture of the settings (sliding) pages
+                  box.addView(row(0xFF9C27B0, "🖌", t("رنگ منو", "Menu color"), null, 0, DLG, x -> {
+                      page = MBG;
+                      if (dlg[0] != null) dlg[0].dismiss();
                   }));
                   CheckBox lc = new CheckBox(this);
                   lc.setText(t("خط کادر", "Box line"));
@@ -1636,7 +1680,7 @@ jobs:
                   lc.setPadding(dp(8), dp(12), dp(8), dp(12));
                   box.addView(lc);
                   sv.addView(box);
-                  dh[0] = new AlertDialog.Builder(this).setTitle(t("تنظیمات آیکون‌های بالا", "Top icons settings")).setView(sv)
+                  dlg[0] = new AlertDialog.Builder(this).setTitle(t("تنظیمات آیکون‌های بالا", "Top icons settings")).setView(sv)
                           .setPositiveButton(t("تأیید", "OK"), null)
                           .setOnDismissListener(d -> show()).show();
               }
@@ -2008,7 +2052,8 @@ jobs:
                   return 0;
               }
 
-              void swap(final View nv, int dir, final boolean nvMenu, final boolean oldMenu) {
+              // settings pages carry their own opaque background, so nothing needs to be painted here
+              void swap(final View nv, int dir) {
                   while (container.getChildCount() > 1) container.removeViewAt(0);
                   final View old = container.getChildCount() > 0 ? container.getChildAt(0) : null;
                   int W = container.getWidth() > 0 ? container.getWidth()
@@ -2020,17 +2065,12 @@ jobs:
                   }
                   if (dir > 0) {
                       container.addView(nv, new FrameLayout.LayoutParams(-1, -1));
-                      if (bgBmp != null && !nvMenu) nv.setBackground(new BitmapDrawable(getResources(), bgBmp));
                       nv.setTranslationX(dir == 1 ? -W : W);
                       nv.animate().translationX(0).setDuration(300)
                               .setInterpolator(new DecelerateInterpolator())
-                              .withEndAction(() -> {
-                                  container.removeView(old);
-                                  if (bgBmp != null && !nvMenu) nv.setBackground(null);
-                              }).start();
+                              .withEndAction(() -> container.removeView(old)).start();
                   } else {
                       container.addView(nv, 0, new FrameLayout.LayoutParams(-1, -1));
-                      if (bgBmp != null && !oldMenu) old.setBackground(new BitmapDrawable(getResources(), bgBmp));
                       old.animate().translationX(dir == -1 ? -W : W).setDuration(260)
                               .setInterpolator(new AccelerateInterpolator())
                               .withEndAction(() -> container.removeView(old)).start();
@@ -2038,19 +2078,20 @@ jobs:
               }
 
               void show() {
+                  boolean mp = menuPage();
                   int fg = 0xFFFFFFFF;
+                  if (mp && mbgBmp == null && isLight(solid(mbg()))) fg = 0xFF111111;
                   fgc = fg;
-                  boolean mp = isMenuPage(page);
-                  int sbc = mp ? solid(menuBg) : (bgBmp != null ? 0 : solid(bg));
-                  getWindow().setStatusBarColor(sbc);
-                  getWindow().setNavigationBarColor(sbc);
+                  int barC = mp ? solid(mbg()) : (bgBmp != null ? 0 : solid(bg));
+                  getWindow().setStatusBarColor(barC);
+                  getWindow().setNavigationBarColor(barC);
                   getWindow().getDecorView().setSystemUiVisibility(0);
                   View v;
                   if (page == SETTINGS) v = settingsPage(fg);
-                  else if (page == BG) v = bgPageFor("", fg);
-                  else if (page == MENUBG) v = bgPageFor("m", fg);
-                  else if (page == HFBG) v = bgPageFor("h", fg);
-                  else if (page == HOMEPG) v = homePgPage(fg);
+                  else if (page == HPAGE) v = homeSetPage(fg);
+                  else if (page == BG) v = bgPage(fg);
+                  else if (page == HFBG) v = bgPageG(2, fg);
+                  else if (page == MBG) v = bgPageG(1, fg);
                   else if (page == BEHAVIOR) v = behaviorPage(fg);
                   else if (page == DOCK) v = dockPageView(fg);
                   else if (page == DOCKBG) v = dockBgPage(fg);
@@ -2066,36 +2107,22 @@ jobs:
                   else if (page == RESTORE) v = restorePage(fg);
                   else v = homePage(fg);
                   v.setLayoutDirection(fa ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR);
-                  if (mp) {
-                      v.setBackground(menuDrawable());
-                      menuRootV = v;
-                  }
+                  if (mp) v.setBackground(menuBgDrawable());
                   baseSz.clear();
                   walk(v, page == HOME);
                   int from = shownPage;
                   shownPage = page;
-                  swap(v, transDir(from, page), mp, from >= 0 && isMenuPage(from));
+                  swap(v, transDir(from, page));
               }
 
               // ================= home =================
-              FrameView makeFrame() {
-                  FrameView fv = new FrameView(this);
-                  cfgFrame(fv);
-                  return fv;
-              }
-
-              void cfgFrame(FrameView fv) {
-                  fv.cfg(sp.getBoolean("hbgImg", false) ? frameSrc : null, sp.getInt("hbg", 0x3A28282C),
-                          sp.getInt("hbgFade", 0), sp.getInt("hbgZoom", 100), sp.getInt("hbgPx", 50),
-                          sp.getInt("hbgPy", 50), sp.getBoolean("hf_3d", false), dp(26), dp(3));
-              }
-
               View homePage(final int fg) {
                   cells.clear();
                   gears.clear();
                   curPanel = null;
                   plusMenuV = null;
                   smallName = null;
+                  frameV = null;
                   folderCtl.clear();
                   immersive = false;
                   ovLayer = null;
@@ -2135,26 +2162,28 @@ jobs:
 
                   FrameLayout mid = new FrameLayout(this);
                   mid.setClipChildren(false);
-                  View gv = gridScroll(fg);
-                  // the grid sits on top of the optional home frame; both dim / blur together
-                  FrameLayout gridBox = new FrameLayout(this);
-                  gridBox.setClipChildren(false);
-                  if (sp.getBoolean("hf_on", false)) {
-                      FrameView hfv = makeFrame();
-                      FrameLayout.LayoutParams hl = new FrameLayout.LayoutParams(-1, -1);
-                      int hres = sp.getBoolean("dockOn1", true) ? Math.max(0, dockReserve() - dp(4)) : 0;
-                      if (dockTop) {
-                          hl.topMargin = hres;
-                      } else {
-                          hl.topMargin = dp(6);
-                          hl.bottomMargin = hres;
-                      }
-                      gridBox.addView(hfv, hl);
+                  // home frame: a panel like the immersive folder, from the top of the dock up to the top icons
+                  final boolean framed = sp.getBoolean("hfOn", false);
+                  if (framed) {
+                      frameV = new View(this);
+                      frameV.setBackground(new FrameDrawable(sp.getInt("hfBg", 0x6628282C), sp.getBoolean("hf3d", false),
+                              dp(26), dp(3), hfSrc, sp.getInt("hfZoom", 100) / 100f, sp.getInt("hfPx", 50) / 100f,
+                              sp.getInt("hfPy", 50) / 100f, sp.getInt("hfFade", 0)));
+                      FrameLayout.LayoutParams fpp = new FrameLayout.LayoutParams(-1, -1);
+                      if (dockTop) fpp.topMargin = dockReserve(); else fpp.bottomMargin = dockReserve();
+                      mid.addView(frameV, fpp);
                   }
-                  gridBox.addView(gv, new FrameLayout.LayoutParams(-1, -1));
-                  gridView = gridBox;
-                  if (openFolder != null && !animFolder) gridBox.setAlpha(1f - sp.getInt("fpDim", 25) / 100f);
-                  mid.addView(gridBox, new FrameLayout.LayoutParams(-1, -1));
+                  View gv = gridScroll(fg);
+                  gridView = gv;
+                  if (openFolder != null && !animFolder) {
+                      gv.setAlpha(1f - sp.getInt("fpDim", 25) / 100f);
+                      if (frameV != null) frameV.setAlpha(1f - sp.getInt("fpDim", 25) / 100f);
+                  }
+                  FrameLayout.LayoutParams gvp = new FrameLayout.LayoutParams(-1, -1);
+                  if (framed) {
+                      if (dockTop) gvp.topMargin = dockReserve(); else gvp.bottomMargin = dockReserve();
+                  }
+                  mid.addView(gv, gvp);
                   // the dock floats over the grid, which scrolls behind it
                   mid.addView(dockBox, new FrameLayout.LayoutParams(-1, -2, dockTop ? Gravity.TOP : Gravity.BOTTOM));
                   trashBtn = trashView();
@@ -2571,7 +2600,7 @@ jobs:
               void applyBlur(float r) {
                   if (Build.VERSION.SDK_INT < 31) return;
                   RenderEffect e = r > 0.5f ? RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP) : null;
-                  View[] vs = immersive ? new View[]{gridView} : new View[]{gridView, headV, dockBoxV};
+                  View[] vs = immersive ? new View[]{gridView, frameV} : new View[]{gridView, frameV, headV, dockBoxV};
                   for (View v : vs) if (v != null) v.setRenderEffect(e);
               }
 
@@ -2611,7 +2640,7 @@ jobs:
                   c.translate(-sx, -sy);
                   if (bgBmp != null) c.drawBitmap(bgBmp, 0, 0, null);
                   else c.drawColor(solid(bg) | 0xFF000000);
-                  View[] vs = {headV, gridView, dockBoxV};
+                  View[] vs = {headV, frameV, gridView, dockBoxV};
                   for (View v : vs) {
                       if (v == null || v.getWidth() == 0) continue;
                       try {
@@ -2670,7 +2699,10 @@ jobs:
 
               View gridScroll(final int fg) {
                   DisplayMetrics dm = getResources().getDisplayMetrics();
-                  int cols = sp.getInt("gridCols", 4), rows = sp.getInt("gridRows", 7);
+                  // the row count is fixed now; "Horizontal spacing" only moves rows 2, 3, ... (the first row never moves)
+                  int cols = sp.getInt("gridCols", 4), rows = 7;
+                  int rowGapPx = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_MM,
+                          Math.max(-3, Math.min(7, sp.getInt("gridGap", 0))), dm);
                   boolean hide = sp.getBoolean("hideNames", false);
                   boolean folderNames = !hide && sp.getBoolean("fpNameHome", true);
                   int iconSz = sp.getInt("iconSz", 56);
@@ -2683,21 +2715,20 @@ jobs:
                           Math.max(iconPx, folderPx) + (hide ? dp(10) : dp(30)));
                   int ts = sp.contains("nameSz") ? sp.getInt("nameSz", 12) : (cols <= 5 ? 12 : (cols <= 8 ? 10 : 8));
                   int fts = sp.contains("fpTsBot") ? sp.getInt("fpTsBot", 12) : ts;
-                  // spacing between rows (the first row never moves): -3 mm .. 7 mm
-                  int rowGapPx = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_MM,
-                          Math.max(-3, Math.min(7, sp.getInt("gridGap", 0))), dm);
 
                   // the home page scrolls behind the dock and fades out there
+                  // (with the home frame on, the page ends at the frame edge and fades there)
+                  final boolean framed = sp.getBoolean("hfOn", false);
                   final boolean fadeTop = sp.getInt("dockPos1", 0) == 1;
-                  final int dres = dockReserve();
-                  final int fadeLen = dp(40);
+                  final int dres = framed ? 0 : dockReserve();
+                  final int fadeLen = framed ? dp(24) : dp(40);
                   ScrollView sv = new ScrollView(this) {
                       final Paint maskP = new Paint();
                       { maskP.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN)); }
 
                       @Override
                       protected void dispatchDraw(Canvas c) {
-                          if (dres <= 0) { super.dispatchDraw(c); return; }
+                          if (dres <= 0 && !framed) { super.dispatchDraw(c); return; }
                           final int sx = getScrollX(), sy = getScrollY();
                           int w = getWidth(), h = getHeight();
                           c.save();
@@ -2895,7 +2926,7 @@ jobs:
                           }
                       }
                       if (!found) return false;
-                      View[] pv = {gridView, headV, dockBoxV};
+                      View[] pv = {gridView, frameV, headV, dockBoxV};
                       for (View v : pv) {
                           if (v == null) continue;
                           v.setLayerType(View.LAYER_TYPE_NONE, null);
@@ -2944,11 +2975,12 @@ jobs:
                       // cached pictures of the page parts keep every frame cheap
                       try {
                           if (gridView != null) gridView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+                          if (frameV != null) frameV.setLayerType(View.LAYER_TYPE_HARDWARE, null);
                           if (headV != null) headV.setLayerType(View.LAYER_TYPE_HARDWARE, null);
                           if (dockBoxV != null) dockBoxV.setLayerType(View.LAYER_TYPE_HARDWARE, null);
                       } catch (Throwable e) { }
                       ValueAnimator va = ValueAnimator.ofFloat(1f, 0f);
-                      va.setDuration(240);
+                      va.setDuration(250);
                       va.setInterpolator(new PathInterpolator(0.2f, 0f, 0f, 1f));
                       va.addUpdateListener(a -> ap.accept((Float) a.getAnimatedValue()));
                       va.addListener(new AnimatorListenerAdapter() {
@@ -3815,6 +3847,7 @@ jobs:
                           ghost.setAlpha(ga);
                           if (smallName != null) smallName.setAlpha(ga);
                           if (gridView != null) gridView.setAlpha(sw ? dimEnd : 1f + (dimEnd - 1f) * p);
+                          if (frameV != null) frameV.setAlpha(sw ? dimEnd : 1f + (dimEnd - 1f) * p);
                           if (headV != null) headV.setAlpha(1f + (chromeEnd - 1f) * p);
                           if (topLineV != null) topLineV.setAlpha(1f + (chromeEnd - 1f) * p);
                           if (dockBoxV != null) dockBoxV.setAlpha(1f + (chromeEnd - 1f) * p);
@@ -3842,7 +3875,7 @@ jobs:
                           ap.accept(0f);
                           panel.setAlpha(1f);
                           ValueAnimator va = ValueAnimator.ofFloat(0f, 1f);
-                          va.setDuration(280);
+                          va.setDuration(290);
                           va.setInterpolator(new PathInterpolator(0.2f, 0f, 0f, 1f));
                           va.addUpdateListener(an -> ap.accept((Float) an.getAnimatedValue()));
                           va.addListener(new AnimatorListenerAdapter() {
@@ -4126,8 +4159,8 @@ jobs:
               View settingsPage(int fg) {
                   LinearLayout r = vbox();
                   r.addView(topBar(t("تنظیمات", "Settings"), fg));
-                  r.addView(row(0xFF26C6DA, "🏠", t("صفحه خانگی", "Home page"), null, 0, fg,
-                          v -> { page = HOMEPG; show(); }));
+                  r.addView(row(0xFF5E35B1, "🏠", t("صفحه خانگی", "Home Page"), null, 0, fg,
+                          v -> { page = HPAGE; show(); }));
                   r.addView(row(0xFF5C6BC0, "🎨", t("پس‌زمینه", "Background"), null, 0, fg,
                           v -> { page = BG; show(); }));
                   r.addView(row(0xFFFF9800, "🚀", t("رفتار", "Behavior"), null, 0, fg,
@@ -4157,19 +4190,25 @@ jobs:
                   return sv;
               }
 
-              // ---------- home page options: frame / 3D / frame background ----------
-              View homePgPage(int fg) {
+              // ---------- home page: frame, 3D, frame background ----------
+              View homeSetPage(int fg) {
                   LinearLayout r = vbox();
-                  r.addView(topBar(t("صفحه خانگی", "Home page"), fg));
-                  final boolean on = sp.getBoolean("hf_on", false);
-                  r.addView(row(0xFF26C6DA, "▭", t("کادر صفحه خانگی", "Home page frame"),
-                          t("یک کادر شبیه پوشه فراگیر پشت آیکون‌ها", "A frame like the immersive folder behind the icons"),
-                          on ? 3 : 2, fg, v -> { sp.edit().putBoolean("hf_on", !on).apply(); show(); }));
-                  final boolean d3 = sp.getBoolean("hf_3d", false);
-                  r.addView(row(0xFF7E57C2, "◈", t("سه بعدی", "3D"),
-                          t("لبه‌های کادر سه‌بعدی و شیک می‌شود", "Gives the frame stylish 3D edges"),
-                          d3 ? 3 : 2, fg, v -> { sp.edit().putBoolean("hf_3d", !d3).apply(); show(); }));
-                  r.addView(row(0xFFFF7043, "🎨", t("پس‌زمینه کادر", "Frame background"),
+                  r.addView(topBar(t("صفحه خانگی", "Home Page"), fg));
+                  final boolean on = sp.getBoolean("hfOn", false);
+                  r.addView(row(0xFF7E57C2, "▣", t("کادر صفحه خانگی", "Home page frame"),
+                          t("کادری مثل پوشه فراگیر پشت آیکون‌های صفحه", "A frame like the immersive folder behind the icons"),
+                          on ? 3 : 2, fg, v -> {
+                      sp.edit().putBoolean("hfOn", !on).apply();
+                      show();
+                  }));
+                  final boolean d3 = sp.getBoolean("hf3d", false);
+                  r.addView(row(0xFF26A69A, "◈", t("سه بعدی", "3D"),
+                          t("لبه‌های کادر به شکل سه بعدی", "Frame edges look 3D"),
+                          d3 ? 3 : 2, fg, v -> {
+                      sp.edit().putBoolean("hf3d", !d3).apply();
+                      show();
+                  }));
+                  r.addView(row(0xFFFF7043, "🖼", t("پس‌زمینه کادر", "Frame background"),
                           t("رنگ، شفافیت و عکس کادر", "Color, transparency and picture of the frame"), 0, fg,
                           v -> { page = HFBG; show(); }));
                   ScrollView sv = new ScrollView(this);
@@ -4374,61 +4413,87 @@ jobs:
                   show();
               }
 
-              int curBgColor(String p) {
-                  if (p.isEmpty()) return bg;
-                  if (p.equals("m")) return menuBg;
-                  return sp.getInt("hbg", 0x3A28282C);
+              // ---------- background pages ----------
+              // the main Background option only changes the home page
+              View bgPage(final int fg) { return bgPageG(0, fg); }
+
+              int curColor(int mode) {
+                  return mode == 0 ? bg : (mode == 1 ? mbg() : sp.getInt("hfBg", 0x6628282C));
               }
 
-              // one background editor for three targets: "" = home page, "m" = settings menu, "h" = home frame
-              View bgPageFor(final String p, final int fg) {
-                  LinearLayout pg = vbox();
-                  final boolean isH = p.equals("h");
-                  pg.addView(topBar(p.isEmpty() ? t("پس‌زمینه", "Background")
-                          : (p.equals("m") ? t("رنگ منو", "Menu color")
-                          : t("پس‌زمینه کادر", "Frame background")), fg));
-
-                  final FrameView pv = isH ? makeFrame() : null;
-                  if (pv != null) {
-                      LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(-1, dp(110));
-                      pl.setMargins(0, dp(12), 0, 0);
-                      pg.addView(pv, pl);
+              // a picture setting changed (slider released)
+              void imgChanged(int mode) {
+                  if (mode == 0) {
+                      renderBg();
+                      applyWindowBg();
+                  } else if (mode == 1) {
+                      mbgBmp = renderImg(mbgSrc, "m", mbg());
+                      View cv = container.getChildAt(container.getChildCount() - 1);
+                      if (cv != null) cv.setBackground(menuBgDrawable());
                   }
+              }
 
-                  boolean hasImg = p.isEmpty() ? bgBmp != null
-                          : (p.equals("m") ? menuBmp != null : (frameSrc != null && sp.getBoolean("hbgImg", false)));
-                  pg.addView(row(0xFF26A69A, "🖼", t("عکس پس‌زمینه", "Background image"),
+              void setColorG(int mode, int c) {
+                  if (mode == 0) {
+                      setBg(c);
+                      return;
+                  }
+                  if (mode == 1) {
+                      sp.edit().putInt("mBg", c).putBoolean("mImg", false).apply();
+                      mbgSrc = null;
+                      mbgBmp = null;
+                  } else {
+                      sp.edit().putInt("hfBg", c).putBoolean("hfImg", false).apply();
+                      hfSrc = null;
+                  }
+                  show();
+              }
+
+              void removeImgG(int mode) {
+                  if (mode == 0) {
+                      removeBgImage();
+                  } else if (mode == 1) {
+                      sp.edit().putBoolean("mImg", false).apply();
+                      mbgSrc = null;
+                      mbgBmp = null;
+                      show();
+                  } else {
+                      sp.edit().putBoolean("hfImg", false).apply();
+                      hfSrc = null;
+                      show();
+                  }
+              }
+
+              // mode 0 = home page background, 1 = settings menu color, 2 = home frame background
+              View bgPageG(final int mode, final int fg) {
+                  final String pre = mode == 0 ? "bg" : (mode == 1 ? "m" : "hf");
+                  final int req = mode == 0 ? REQ_IMG : (mode == 1 ? REQ_MIMG : REQ_FIMG);
+                  String title = mode == 0 ? t("پس‌زمینه", "Background")
+                          : (mode == 1 ? t("رنگ منو", "Menu color") : t("پس‌زمینه کادر", "Frame background"));
+                  LinearLayout p = vbox();
+                  p.addView(topBar(title, fg));
+
+                  boolean hasImg = mode == 0 ? bgBmp != null : (mode == 1 ? mbgBmp != null : hfSrc != null);
+                  p.addView(row(0xFF26A69A, "🖼", t("عکس پس‌زمینه", "Background image"),
                           hasImg ? t("فعال", "Active") : t("انتخاب عکس از گالری", "Pick a photo from the gallery"),
-                          0, fg, v -> pickBgImage(p)));
+                          0, fg, v -> pickImg(req)));
                   if (hasImg) {
                       // changes are applied to the screen when the slider is released
-                      Runnable rb = () -> {
-                          if (p.isEmpty()) {
-                              renderBg();
-                              applyWindowBg();
-                          } else if (p.equals("m")) {
-                              renderMenu();
-                              if (menuRootV != null) menuRootV.setBackground(menuDrawable());
-                          } else if (pv != null) {
-                              cfgFrame(pv);
-                          }
-                      };
-                      IntConsumer lv = null;
-                      if (isH) lv = x -> cfgFrame(pv);
-                      pg.addView(accordionRowL(0xFF607D8B, "🌫", t("مات", "Fade"), p + "bgFade", 0, 98, 0, "%", fg, rb, lv));
-                      pg.addView(accordionGroup(0xFF8BC34A, "✂", t("برش و اندازه عکس", "Crop & size"), fg,
-                              slider(t("اندازه", "Zoom"), p + "bgZoom", 100, 300, 100, "%", fg, rb, lv),
-                              slider(t("جابه‌جایی افقی", "Horizontal"), p + "bgPx", 0, 100, 50, "%", fg, rb, lv),
-                              slider(t("جابه‌جایی عمودی", "Vertical"), p + "bgPy", 0, 100, 50, "%", fg, rb, lv)));
-                      pg.addView(row(0xFFE53935, "✕", t("حذف عکس", "Remove image"), null, 0, fg,
-                              v -> removeBgImage(p)));
+                      Runnable rb = () -> imgChanged(mode);
+                      p.addView(accordionRow(0xFF607D8B, "🌫", t("مات", "Fade"), pre + "Fade", 0, 98, 0, "%", fg, rb));
+                      p.addView(accordionGroup(0xFF8BC34A, "✂", t("برش و اندازه عکس", "Crop & size"), fg,
+                              slider(t("اندازه", "Zoom"), pre + "Zoom", 100, 300, 100, "%", fg, rb),
+                              slider(t("جابه‌جایی افقی", "Horizontal"), pre + "Px", 0, 100, 50, "%", fg, rb),
+                              slider(t("جابه‌جایی عمودی", "Vertical"), pre + "Py", 0, 100, 50, "%", fg, rb)));
+                      p.addView(row(0xFFE53935, "✕", t("حذف عکس", "Remove image"), null, 0, fg,
+                              v -> removeImgG(mode)));
                   }
 
                   TextView tt = new TextView(this);
                   tt.setText(t("رنگ پس‌زمینه:", "Background color:"));
                   tt.setTextColor(fg);
                   tt.setPadding(0, dp(16), 0, 0);
-                  pg.addView(tt);
+                  p.addView(tt);
                   HorizontalScrollView hs = new HorizontalScrollView(this);
                   LinearLayout r = new LinearLayout(this);
                   final ColorPicker cp = new ColorPicker(this);
@@ -4441,59 +4506,48 @@ jobs:
                       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44));
                       lp.setMargins(dp(6), dp(8), dp(6), dp(8));
                       sw.setLayoutParams(lp);
-                      sw.setOnClickListener(v -> setBgFor(p, c));
+                      sw.setOnClickListener(v -> setColorG(mode, c));
                       r.addView(sw);
                   }
                   hs.addView(r);
-                  pg.addView(hs);
+                  p.addView(hs);
 
                   TextView t2 = new TextView(this);
                   t2.setText(t("انتخاب دلخواه (رنگ و شفافیت):", "Custom color (with transparency):"));
                   t2.setTextColor(fg);
                   t2.setPadding(0, dp(16), 0, dp(8));
-                  pg.addView(t2);
-                  int cur = curBgColor(p);
-                  cp.setColor(cur);
+                  p.addView(t2);
+                  cp.setColor(curColor(mode));
                   cp.setListener(c -> et.setText(hex(c)));
-                  pg.addView(cp, new LinearLayout.LayoutParams(-1, -2));
+                  p.addView(cp, new LinearLayout.LayoutParams(-1, -2));
 
                   LinearLayout r2 = new LinearLayout(this);
-                  et.setText(hex(cur));
+                  et.setText(hex(curColor(mode)));
                   et.setHintTextColor(0x88888888);
                   et.setTextColor(fg);
                   et.setSingleLine(true);
                   et.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 2));
                   r2.addView(et);
                   r2.addView(btn(t("اعمال", "Apply"), fg, v -> {
-                      try { setBgFor(p, Color.parseColor(et.getText().toString().trim())); }
+                      try { setColorG(mode, Color.parseColor(et.getText().toString().trim())); }
                       catch (Exception e) {
                           Toast.makeText(this, t("کد رنگ نامعتبر است", "Invalid color code"),
                                   Toast.LENGTH_SHORT).show();
                       }
                   }));
-                  pg.addView(r2);
+                  p.addView(r2);
                   ScrollView sv = new ScrollView(this);
                   sv.setBackgroundColor(pbg());
-                  sv.addView(pg);
+                  sv.addView(p);
                   return sv;
               }
 
-              void setBgFor(String p, int c) {
-                  if (p.isEmpty()) {
-                      bg = c;
-                      bgBmp = null;
-                      bgSrc = null;
-                      sp.edit().putInt("bg", c).putBoolean("bgImg", false).apply();
-                      applyWindowBg();
-                  } else if (p.equals("m")) {
-                      menuBg = c;
-                      menuBmp = null;
-                      menuSrc = null;
-                      sp.edit().putInt("mbg", c).putBoolean("mbgImg", false).apply();
-                  } else {
-                      frameSrc = null;
-                      sp.edit().putInt("hbg", c).putBoolean("hbgImg", false).apply();
-                  }
+              void setBg(int c) {
+                  bg = c;
+                  bgBmp = null;
+                  bgSrc = null;
+                  sp.edit().putInt("bg", bg).putBoolean("bgImg", false).apply();
+                  applyWindowBg();
                   show();
               }
 
@@ -4622,6 +4676,7 @@ jobs:
                           v -> { sp.edit().putBoolean("folderSync", !sync).apply(); show(); }));
 
                   r.addView(accordionRow(0xFF9C27B0, "↔", t("تعداد ستون‌ها", "Columns count"), "gridCols", 4, 20, 4, "", fg, null));
+                  // the first row stays where it is; only the gap between the rows below it changes
                   r.addView(accordionRow(0xFF607D8B, "↕", t("فاصله افقی", "Horizontal spacing"), "gridGap", -3, 7, 0, " mm", fg, null));
 
                   final boolean hide = sp.getBoolean("hideNames", false);
@@ -4688,6 +4743,22 @@ jobs:
                   return false;
               }
 
+              // adds a saved picture file to the backup (base64)
+              void putFile(JSONObject root, String key, String name) throws Exception {
+                  File f = new File(getFilesDir(), name);
+                  if (f.exists()) {
+                      byte[] data = java.nio.file.Files.readAllBytes(f.toPath());
+                      root.put(key, Base64.getEncoder().encodeToString(data));
+                  }
+              }
+
+              void getFile(JSONObject root, String key, String name) throws Exception {
+                  if (root.has(key)) {
+                      byte[] data = Base64.getDecoder().decode(root.getString(key));
+                      java.nio.file.Files.write(new File(getFilesDir(), name).toPath(), data);
+                  }
+              }
+
               String buildBackup() throws Exception {
                   JSONObject root = new JSONObject();
                   root.put("app", "VadLan");
@@ -4707,16 +4778,16 @@ jobs:
                       pr.put(k, o);
                   }
                   root.put("prefs", pr);
-                  // pictures: home ("bg"), settings menu ("mbg") and home frame ("hbg")
-                  for (String p : new String[]{"", "m", "h"}) {
-                      if (!sp.getBoolean(p + "bgImg", false)) continue;
-                      File f = bgFile(p);
-                      if (!f.exists() && p.isEmpty()) f = new File(getFilesDir(), "bg.jpg");
+                  if (sp.getBoolean("bgImg", false)) {
+                      File f = new File(getFilesDir(), "bg_src.jpg");
+                      if (!f.exists()) f = new File(getFilesDir(), "bg.jpg");
                       if (f.exists()) {
                           byte[] data = java.nio.file.Files.readAllBytes(f.toPath());
-                          root.put(p + "bg", Base64.getEncoder().encodeToString(data));
+                          root.put("bg", Base64.getEncoder().encodeToString(data));
                       }
                   }
+                  if (sp.getBoolean("hfImg", false)) putFile(root, "hf", "hf_src.jpg");
+                  if (sp.getBoolean("mImg", false)) putFile(root, "menu", "menu_src.jpg");
                   return root.toString();
               }
 
@@ -4764,17 +4835,18 @@ jobs:
                       }
                       ed.putBoolean("open", true);
                       ed.commit();
-                      for (String p : new String[]{"", "m", "h"}) {
-                          if (root.has(p + "bg")) {
-                              byte[] data = Base64.getDecoder().decode(root.getString(p + "bg"));
-                              java.nio.file.Files.write(bgFile(p).toPath(), data);
-                          }
+                      if (root.has("bg")) {
+                          byte[] data = Base64.getDecoder().decode(root.getString("bg"));
+                          java.nio.file.Files.write(new File(getFilesDir(), "bg_src.jpg").toPath(), data);
                       }
+                      getFile(root, "hf", "hf_src.jpg");
+                      getFile(root, "menu", "menu_src.jpg");
                       // reload everything from the restored settings
                       fa = sp.getString("lang", "fa").equals("fa");
                       bg = sp.getInt("bg", colors[0]);
-                      menuBg = sp.getInt("mbg", bg);
                       loadBgImage();
+                      loadMenuImage();
+                      loadFrameImage();
                       applyWindowBg();
                       loadHome();
                       loadDock();
@@ -4840,9 +4912,6 @@ jobs:
                   // 2) Samsung My Files
                   Intent sm = new Intent("samsung.myfiles.intent.action.LAUNCHMYFILES");
                   sm.setClassName("com.sec.android.app.myfiles", "com.sec.android.app.myfiles.external.ui.MainActivity");
-                  sm.putExtra("                  // 2) Samsung My Files
-                  Intent sm = new Intent("samsung.myfiles.intent.action.LAUNCHMYFILES");
-                  sm.setClassName("com.sec.android.app.myfiles", "com.sec.android.app.myfiles.external.ui.MainActivity");
                   sm.putExtra("samsung.myfiles.intent.extra.START_PATH", path);
                   if (tryStart(sm)) return;
                   Intent sm2 = new Intent("samsung.myfiles.intent.action.LAUNCHSTORAGE");
@@ -4882,10 +4951,7 @@ jobs:
                           0, fg, v -> { if (ensureStorage()) { page = RESTORE; show(); } });
                   rest.setOnLongClickListener(v -> { vib(25); openBackupFolder(); return true; });
                   r.addView(rest);
-                  ScrollView sv = new ScrollView(this);
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return r;
               }
 
               View restorePage(int fg) {
