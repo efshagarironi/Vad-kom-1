@@ -971,7 +971,7 @@ jobs:
                       animFolder = false, animSettings = false, compact = false, dragFromDock = false,
                       closing = false, immersive = false;
               View trashBtn, cancelBtn, plusMenuV, gridView, headV, dockBoxV, smallName, frameV;
-              View homeMenuV, homePlusV, countBarV, topLineV;
+              View homeMenuV, homePlusV, countBarV, topLineV, topBoxV;
               boolean menuHold = false;
               FrameLayout selLayer;
               View selBoxV, selSliderV;
@@ -1371,61 +1371,63 @@ jobs:
           EOF
           cat >> app/src/main/java/com/mylauncher/MainActivity.java <<'EOF'
 
-              // ================= new helpers: glass, percent box =================
-              // a box that shows a lightly blurred piece of the background behind it
-              static class GlassDrawable extends Drawable {
+              // ================= glass / rounded boxes =================
+              static final int BOX_R = 28;
+              Bitmap mbgBlur, mbgBlurSrc;
+              View menuRoot;
+
+              boolean glass() { return sp.getBoolean("glass", false); }
+
+              // frosted glass box: a very lightly blurred copy of the menu picture, a tint, a sheen and a thin edge
+              class Glass extends Drawable {
                   Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
-                  Paint ip = new Paint(Paint.FILTER_BITMAP_FLAG);
                   Path cl = new Path();
-                  RectF rf = new RectF();
-                  RectF rl = new RectF();
-                  Rect sr = new Rect();
-                  Bitmap bmp;
-                  int ds;
+                  RectF rf = new RectF(), rf2 = new RectF();
+                  Rect dst = new Rect();
+                  int tint;
                   float r;
-                  boolean lightBg;
-                  GlassDrawable(Bitmap bmp, int ds, float r, boolean lightBg) {
-                      this.bmp = bmp;
-                      this.ds = ds;
+                  Bitmap blur;
+                  Glass(int tint, float r, Bitmap blur) {
+                      this.tint = tint;
                       this.r = r;
-                      this.lightBg = lightBg;
+                      this.blur = blur;
                   }
                   @Override
                   public void draw(Canvas c) {
                       Rect b = getBounds();
-                      if (b.width() < 2 || b.height() < 2) return;
+                      if (b.width() < 4 || b.height() < 4) return;
                       float rr = Math.min(r, Math.min(b.width(), b.height()) / 2f);
                       rf.set(b);
                       cl.reset();
                       cl.addRoundRect(rf, rr, rr, Path.Direction.CW);
                       c.save();
                       c.clipPath(cl);
-                      if (bmp != null) {
-                          int ox = 0, oy = 0;
-                          Callback cb = getCallback();
-                          if (cb instanceof View) {
-                              int[] l = new int[2];
-                              ((View) cb).getLocationOnScreen(l);
-                              ox = l[0];
-                              oy = l[1];
-                          }
-                          sr.set((ox + b.left) / ds, (oy + b.top) / ds, (ox + b.right) / ds, (oy + b.bottom) / ds);
-                          c.drawBitmap(bmp, sr, b, ip);
+                      Callback cb = getCallback();
+                      if (blur != null && menuRoot != null && menuRoot.getWidth() > 0 && cb instanceof View) {
+                          int[] a = new int[2], l = new int[2];
+                          menuRoot.getLocationOnScreen(a);
+                          ((View) cb).getLocationOnScreen(l);
+                          dst.set(a[0] - l[0], a[1] - l[1], a[0] - l[0] + menuRoot.getWidth(),
+                                  a[1] - l[1] + menuRoot.getHeight());
+                          c.drawBitmap(blur, null, dst, null);
                       }
-                      pt.setShader(null);
                       pt.setStyle(Paint.Style.FILL);
-                      pt.setColor(lightBg ? 0x4DFFFFFF : 0x1FFFFFFF);
+                      pt.setShader(null);
+                      pt.setColor(tint);
                       c.drawRect(rf, pt);
-                      pt.setShader(new LinearGradient(0, b.top, 0, b.bottom,
-                              lightBg ? 0x40FFFFFF : 0x30FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
+                      pt.setShader(new LinearGradient(0, b.top, 0, b.top + b.height() * 0.6f,
+                              0x30FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
                       c.drawRect(rf, pt);
                       pt.setShader(null);
                       c.restore();
+                      float st = Math.max(1f, dp(1)), h = st / 2f;
                       pt.setStyle(Paint.Style.STROKE);
-                      pt.setStrokeWidth(1.5f);
-                      pt.setColor(lightBg ? 0x66FFFFFF : 0x45FFFFFF);
-                      rl.set(b.left + 0.75f, b.top + 0.75f, b.right - 0.75f, b.bottom - 0.75f);
-                      c.drawRoundRect(rl, Math.max(0f, rr - 0.75f), Math.max(0f, rr - 0.75f), pt);
+                      pt.setStrokeWidth(st);
+                      pt.setShader(new LinearGradient(b.left, b.top, b.right, b.bottom,
+                              0x88FFFFFF, 0x22FFFFFF, Shader.TileMode.CLAMP));
+                      rf2.set(b.left + h, b.top + h, b.right - h, b.bottom - h);
+                      c.drawRoundRect(rf2, rr - h, rr - h, pt);
+                      pt.setShader(null);
                       pt.setStyle(Paint.Style.FILL);
                   }
                   @Override public void setAlpha(int a) { }
@@ -1433,57 +1435,60 @@ jobs:
                   @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
               }
 
-              // a frame whose size is a percent of the space it is given
-              static class Pct extends FrameLayout {
-                  float pw = 1f, ph = 1f;
-                  Pct(Context c) { super(c); }
-                  @Override
-                  protected void onMeasure(int ws, int hs) {
-                      int w = MeasureSpec.getSize(ws), h = MeasureSpec.getSize(hs);
-                      super.onMeasure(MeasureSpec.makeMeasureSpec(Math.max(1, (int) (w * pw)), MeasureSpec.EXACTLY),
-                              MeasureSpec.makeMeasureSpec(Math.max(1, (int) (h * ph)), MeasureSpec.EXACTLY));
+              // small blurred copy of a picture (very low blur)
+              Bitmap makeBlur(Bitmap s) {
+                  try {
+                      int bw = Math.max(2, s.getWidth() / 4), bh = Math.max(2, s.getHeight() / 4);
+                      Bitmap b = Bitmap.createScaledBitmap(s, bw, bh, true);
+                      int[] px = new int[bw * bh];
+                      b.getPixels(px, 0, bw, 0, 0, bw, bh);
+                      boxBlur(px, bw, bh, 1);
+                      boxBlur(px, bw, bh, 1);
+                      Bitmap o = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+                      o.setPixels(px, 0, bw, 0, 0, bw, bh);
+                      return o;
+                  } catch (Throwable e) { return null; }
+              }
+
+              // background of every settings box: plain rounded box, or glass when the option is on
+              Drawable boxBg(int plain, int rDp) {
+                  if (!glass()) {
+                      GradientDrawable g = new GradientDrawable();
+                      g.setCornerRadius(dp(rDp));
+                      g.setColor(plain);
+                      return g;
+                  }
+                  Bitmap bl = null;
+                  if (menuPage() && mbgBmp != null) {
+                      if (mbgBlur == null || mbgBlurSrc != mbgBmp) {
+                          mbgBlur = makeBlur(mbgBmp);
+                          mbgBlurSrc = mbgBmp;
+                      }
+                      bl = mbgBlur;
+                  }
+                  return new Glass(light() ? 0x44FFFFFF : 0x26FFFFFF, dp(rDp), bl);
+              }
+
+              void invalidateGlass(View v) {
+                  if (v.getBackground() instanceof Glass) v.invalidate();
+                  if (v instanceof ViewGroup) {
+                      ViewGroup g = (ViewGroup) v;
+                      for (int i = 0; i < g.getChildCount(); i++) invalidateGlass(g.getChildAt(i));
                   }
               }
 
-              Bitmap glassBmp;
-              final int GDS = 4;
-
-              boolean glass() { return sp.getBoolean("glass", false); }
-
-              // corner radius of the boxes of the settings pages
-              int cardR() { return dp(26); }
-
-              Drawable boxBg(int plain, int radius, boolean useBmp) {
-                  if (glass()) return new GlassDrawable(useBmp ? glassBmp : null, GDS, radius, light());
-                  return rr(plain, radius);
-              }
-
-              Drawable boxBg(int plain, int radius) { return boxBg(plain, radius, true); }
-
-              // a slightly blurred copy of the page background, used behind the glass boxes
-              void buildGlass() {
-                  glassBmp = null;
-                  if (!glass()) return;
-                  Bitmap src = menuPage() ? mbgBmp : bgBmp;
-                  if (src == null) return;
-                  try {
-                      DisplayMetrics dm = getResources().getDisplayMetrics();
-                      int bw = Math.max(2, dm.widthPixels / GDS), bh = Math.max(2, dm.heightPixels / GDS);
-                      Bitmap b = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
-                      Canvas c = new Canvas(b);
-                      c.drawBitmap(src, null, new Rect(0, 0, bw, bh), new Paint(Paint.FILTER_BITMAP_FLAG));
-                      int[] px = new int[bw * bh];
-                      b.getPixels(px, 0, bw, 0, 0, bw, bh);
-                      boxBlur(px, bw, bh, 2);
-                      b.setPixels(px, 0, bw, 0, 0, bw, bh);
-                      glassBmp = b;
-                  } catch (Throwable e) { glassBmp = null; }
-              }
-
-              ScrollView sview() {
-                  ScrollView s = new ScrollView(this);
-                  s.setVerticalScrollBarEnabled(false);
-                  return s;
+              // text that has no box of its own gets the same box as the other options
+              TextView labelBox(String text, int fg) {
+                  TextView tv = new TextView(this);
+                  tv.setText(text);
+                  tv.setTextColor(fg);
+                  tv.setTextSize(14);
+                  tv.setPadding(dp(14), dp(12), dp(14), dp(12));
+                  tv.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, BOX_R));
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+                  lp.setMargins(0, dp(10), 0, 0);
+                  tv.setLayoutParams(lp);
+                  return tv;
               }
 
               // ================= data =================
@@ -1686,7 +1691,7 @@ jobs:
                   x.setText(text);
                   x.setTextColor(fg);
                   x.setAllCaps(false);
-                  x.setBackground(boxBg(light() ? 0x22000000 : 0x33FFFFFF, cardR(), fg != DLG));
+                  x.setBackground(boxBg(light() ? 0x22000000 : 0x33FFFFFF, 22));
                   x.setOnClickListener(c);
                   LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(48), 1);
                   p.setMargins(dp(4), dp(4), dp(4), dp(4));
@@ -1699,24 +1704,26 @@ jobs:
                   v.setImageResource(res);
                   v.setColorFilter(fg);
                   v.setPadding(dp(9), dp(9), dp(9), dp(9));
-                  v.setBackground(boxBg(light() ? 0x22000000 : 0x33FFFFFF, dp(40)));
+                  v.setBackground(oval(light() ? 0x22000000 : 0x33FFFFFF));
                   v.setOnClickListener(c);
                   pressAnim(v);
                   return v;
               }
 
-              // top icon (hamburger / plus) without a circle: the icon sits in a box like the counter boxes
-              ImageView topIcon(int res, int fg, int wDp, int hDp, View.OnClickListener c) {
-                  ImageView v = new ImageView(this);
-                  v.setImageResource(res);
-                  v.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                  v.setPadding(dp(Math.max(4, wDp / 5)), dp(Math.max(4, hDp / 5)),
-                          dp(Math.max(4, wDp / 5)), dp(Math.max(4, hDp / 5)));
+              // top icons of the home page: own width and height (in dp)
+              FrameLayout.LayoutParams absHome(int g, int wDp, int hDp) {
+                  return new FrameLayout.LayoutParams(dp(wDp), dp(hDp), g | Gravity.CENTER_VERTICAL);
+              }
+
+              // circle, or a box like the counters when "header icons shape" is on
+              void styleTop(ImageView v, int fg) {
                   v.setColorFilter(sp.getInt("top_ic", fg));
-                  v.setBackground(boxBg(sp.getInt("top_ibg", sp.getInt("box_bg", 0x33FFFFFF)), dp(16)));
-                  v.setOnClickListener(c);
-                  pressAnim(v);
-                  return v;
+                  if (sp.getBoolean("topIconBox", false)) {
+                      int c = sp.contains("top_ibg") ? sp.getInt("top_ibg", 0x33FFFFFF) : sp.getInt("box_bg", 0x33FFFFFF);
+                      v.setBackground(rr(c, dp(16)));
+                  } else {
+                      v.setBackground(oval(sp.getInt("top_ibg", light() ? 0x22000000 : 0x33FFFFFF)));
+                  }
               }
 
               // opens after holding for 1 second; the normal tap still works
@@ -1761,91 +1768,93 @@ jobs:
                   return isLight(c) ? 0xB3000000 : 0xB3FFFFFF;
               }
 
-              // updates the tick of a row made by row() with ind 2 / 3
-              void setTick(View r, boolean on) {
-                  if (!(r instanceof LinearLayout)) return;
-                  LinearLayout l = (LinearLayout) r;
-                  View last = l.getChildAt(l.getChildCount() - 1);
-                  if (!(last instanceof TextView)) return;
-                  TextView ck = (TextView) last;
-                  GradientDrawable g2 = oval(on ? 0xFF34C759 : 0);
-                  if (on) {
+              // check circle of a row (ind 1 = green tick, 2 = empty circle, 3 = filled circle)
+              TextView indView(int ind) {
+                  TextView ck = new TextView(this);
+                  ck.setTag("x");
+                  ck.setText("✓");
+                  if (ind == 1) {
+                      ck.setTextSize(20);
+                      ck.setTextColor(0xFF34C759);
+                      return ck;
+                  }
+                  ck.setTextSize(13);
+                  ck.setGravity(Gravity.CENTER);
+                  GradientDrawable g2 = oval(ind == 3 ? 0xFF34C759 : 0);
+                  if (ind == 3) {
                       ck.setTextColor(0xFFFFFFFF);
                   } else {
                       ck.setTextColor(0);
                       g2.setStroke(dp(2), 0x88888888);
                   }
                   ck.setBackground(g2);
+                  ck.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
+                  return ck;
               }
 
-              // a row with a tick that flips a boolean setting
-              View toggleRow(int dot, String sym, String title, String sub, final String key, final boolean def, int fg) {
-                  final View[] rv = new View[1];
-                  rv[0] = row(dot, sym, title, sub, sp.getBoolean(key, def) ? 3 : 2, fg, v -> {
-                      boolean n = !sp.getBoolean(key, def);
-                      sp.edit().putBoolean(key, n).apply();
-                      setTick(rv[0], n);
+              // a boxed on/off option that flips its own circle when tapped
+              View toggleRow(int dot, String sym, String title, String sub, final String key,
+                             final boolean def, int fg) {
+                  View r = row(dot, sym, title, sub, sp.getBoolean(key, def) ? 3 : 2, fg, null);
+                  r.setOnClickListener(v -> {
+                      boolean on = !sp.getBoolean(key, def);
+                      sp.edit().putBoolean(key, on).apply();
+                      ViewGroup g = (ViewGroup) v;
+                      g.removeViewAt(g.getChildCount() - 1);
+                      g.addView(indView(on ? 3 : 2));
                   });
-                  return rv[0];
-              }
-
-              // a plain text line placed in a rounded box, like the other settings options
-              View textCard(String text, int fg, float alpha, int size) {
-                  TextView tv = new TextView(this);
-                  tv.setText(text);
-                  tv.setTextSize(size);
-                  tv.setTextColor((fg & 0x00FFFFFF) | (((int) (255 * alpha)) << 24));
-                  tv.setPadding(dp(14), dp(12), dp(14), dp(12));
-                  tv.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, cardR(), fg != DLG && !compact));
-                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-                  lp.setMargins(0, dp(10), 0, 0);
-                  tv.setLayoutParams(lp);
-                  return tv;
+                  return r;
               }
 
               void topBtnMenu() {
                   final AlertDialog[] dlg = new AlertDialog[1];
-                  ScrollView sv = sview();
+                  ScrollView sv = new ScrollView(this);
+                  sv.setVerticalScrollBarEnabled(false);
                   LinearLayout box = new LinearLayout(this);
                   box.setOrientation(LinearLayout.VERTICAL);
                   box.setPadding(dp(16), dp(8), dp(16), dp(8));
-                  // placement of the two icons (first lever: vertical, second lever: horizontal)
+                  int dsz = sp.getInt("home_btn_sz", 40);
+                  // placement of the two icons: first lever = horizontal, second = vertical
                   box.addView(accordionGroup(0xFF00ACC1, "↔", t("جای‌گیری آیکون‌ها", "Icons placement"), DLG,
                           accordionGroup(0xFF5C6BC0, "☰", t("همبرگری", "Hamburger"), DLG,
-                                  slider(t("جابجایی طولی", "Vertical shift"), "hm_py", -60, 60, 0, " dp", DLG, null),
-                                  slider(t("جابجایی عرضی", "Horizontal shift"), "hm_px", -60, 60, 0, " dp", DLG, null)),
-                          accordionGroup(0xFF66BB6A, "+", t("بعلاوه", "Plus"), DLG,
-                                  slider(t("جابجایی طولی", "Vertical shift"), "pl_py", -60, 60, 0, " dp", DLG, null),
-                                  slider(t("جابجایی عرضی", "Horizontal shift"), "pl_px", -60, 60, 0, " dp", DLG, null))));
-                  // size of the two icons (first lever: vertical, second lever: horizontal)
+                                  slider(t("جابجایی طولی", "Horizontal move"), "hamX", -100, 100, 0, " dp", DLG, null),
+                                  slider(t("جابجایی عرضی", "Vertical move"), "hamY", -30, 30, 0, " dp", DLG, null)),
+                          accordionGroup(0xFFFF7043, "+", t("بعلاوه", "Plus"), DLG,
+                                  slider(t("جابجایی طولی", "Horizontal move"), "plusX", -100, 100, 0, " dp", DLG, null),
+                                  slider(t("جابجایی عرضی", "Vertical move"), "plusY", -30, 30, 0, " dp", DLG, null))));
+                  // size of the two icons: first lever = vertical, second = horizontal
                   box.addView(accordionGroup(0xFF2196F3, "📐", t("سایز", "Size"), DLG,
                           accordionGroup(0xFF5C6BC0, "☰", t("سایز آیکون همبرگری", "Hamburger icon size"), DLG,
-                                  slider(t("سایز عمودی", "Vertical size"), "hm_h", 24, 96, 40, " dp", DLG, null),
-                                  slider(t("سایز افقی", "Horizontal size"), "hm_w", 24, 120, 48, " dp", DLG, null)),
-                          accordionGroup(0xFF66BB6A, "+", t("سایز آیکون بعلاوه", "Plus icon size"), DLG,
-                                  slider(t("سایز عمودی", "Vertical size"), "pl_h", 24, 96, 40, " dp", DLG, null),
-                                  slider(t("سایز افقی", "Horizontal size"), "pl_w", 24, 120, 48, " dp", DLG, null))));
+                                  slider(t("سایز عمودی", "Vertical size"), "hamH", 24, 120, dsz, " dp", DLG, null),
+                                  slider(t("سایز افقی", "Horizontal size"), "hamW", 24, 120, dsz, " dp", DLG, null)),
+                          accordionGroup(0xFFFF7043, "+", t("سایز آیکون بعلاوه", "Plus icon size"), DLG,
+                                  slider(t("سایز عمودی", "Vertical size"), "plusH", 24, 120, dsz, " dp", DLG, null),
+                                  slider(t("سایز افقی", "Horizontal size"), "plusW", 24, 120, dsz, " dp", DLG, null))));
                   box.addView(accordionGroup(0xFFE91E63, "🎨", t("رنگ", "Color"), DLG,
-                          row(0xFFE91E63, "🎨", t("رنگ و شفافیت آیکون‌ها", "Icons color and transparency"), null, 0, DLG,
+                          row(0xFFE91E63, "🖌", t("رنگ و شفافیت آیکون‌ها", "Icons color and transparency"), null, 0, DLG,
                                   w -> prefColorDialog("top_ic", fgc, t("رنگ آیکون‌ها", "Icons color"))),
-                          row(0xFF9C27B0, "🎨", t("رنگ و شفافیت پس‌زمینه آیکون‌ها", "Icons background color and transparency"), null, 0, DLG,
-                                  w -> prefColorDialog("top_ibg", sp.getInt("box_bg", 0x33FFFFFF),
+                          row(0xFFAB47BC, "🖌", t("رنگ و شفافیت پس‌زمینه آیکون‌ها", "Icons background color and transparency"),
+                                  null, 0, DLG,
+                                  w -> prefColorDialog("top_ibg", light() ? 0x22000000 : 0x33FFFFFF,
                                           t("رنگ پس‌زمینه آیکون‌ها", "Icons background color")))));
                   // menu color: color, transparency and picture of the settings (sliding) pages
                   box.addView(row(0xFF9C27B0, "🖌", t("رنگ منو", "Menu color"), null, 0, DLG, x -> {
                       page = MBG;
                       if (dlg[0] != null) dlg[0].dismiss();
                   }));
-                  box.addView(toggleRow(0xFF607D8B, "▭", t("خط کادر", "Box line"), null, "topLine", false, DLG));
-                  box.addView(toggleRow(0xFF7E57C2, "▣", t("کادر تنظیمات", "Settings frame"),
-                          t("کادری دور آیکون‌ها و کادرهای شمارش", "A frame around the icons and counter boxes"),
-                          "topFrame", false, DLG));
-                  box.addView(accordionGroup(0xFF26A69A, "↕", t("سایز کادر بالا", "Top frame size"), DLG,
-                          slider(t("سایز طولی", "Vertical size"), "topFrH", 44, 120, 56, " dp", DLG, null),
-                          slider(t("سایز عرضی", "Horizontal size"), "topFrW", 50, 100, 100, "%", DLG, null)));
-                  box.addView(toggleRow(0xFF42A5F5, "◇", t("کادر شیشه‌ای", "Glass boxes"),
-                          t("همه کادرها شیشه‌ای با بلور کم", "All boxes look like glass with a light blur"),
+                  box.addView(toggleRow(0xFF26C6DA, "◇", t("کادر شیشه‌ای", "Glass boxes"),
+                          t("کادرهای تنظیمات شیشه‌ای با بلور بسیار کم می‌شوند", "Settings boxes look like glass with a very light blur"),
                           "glass", false, DLG));
+                  box.addView(toggleRow(0xFFEF5350, "◻", t("شکل آیکون‌های سربرگ", "Header icons shape"),
+                          t("آیکون‌ها بدون دایره و داخل کادر مثل کادر شمارش", "Icons sit in boxes like the counters, not circles"),
+                          "topIconBox", false, DLG));
+                  box.addView(toggleRow(0xFF78909C, "▭", t("خط کادر", "Box line"), null, "topLine", false, DLG));
+                  box.addView(toggleRow(0xFF7E57C2, "▣", t("کادر تنظیمات", "Settings frame"),
+                          t("کادری دور آیکون‌ها و کادرهای شمارش", "A frame around the icons and the counters"),
+                          "topBoxOn", false, DLG));
+                  box.addView(accordionGroup(0xFF8BC34A, "📏", t("سایز کادر بالا", "Top frame size"), DLG,
+                          slider(t("طول", "Length"), "topBoxW", 40, 100, 100, "%", DLG, null),
+                          slider(t("عرض", "Width"), "topBoxH", 44, 120, 56, " dp", DLG, null)));
                   sv.addView(box);
                   dlg[0] = new AlertDialog.Builder(this).setTitle(t("تنظیمات آیکون‌های بالا", "Top icons settings")).setView(sv)
                           .setPositiveButton(t("تأیید", "OK"), null)
@@ -1875,7 +1884,7 @@ jobs:
                   LinearLayout r = new LinearLayout(this);
                   r.setGravity(Gravity.CENTER_VERTICAL);
                   r.setPadding(dp(pad), dp(pad), dp(pad), dp(pad));
-                  r.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, cardR(), fg != DLG && !compact));
+                  r.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, BOX_R));
                   TextView d = new TextView(this);
                   d.setTag("x");
                   d.setText(sym);
@@ -1902,29 +1911,7 @@ jobs:
                       col.addView(s);
                   }
                   r.addView(col, new LinearLayout.LayoutParams(0, -2, 1));
-                  if (ind == 1) {
-                      TextView ck = new TextView(this);
-                      ck.setTag("x");
-                      ck.setText("✓");
-                      ck.setTextSize(20);
-                      ck.setTextColor(0xFF34C759);
-                      r.addView(ck);
-                  } else if (ind >= 2) {
-                      TextView ck = new TextView(this);
-                      ck.setTag("x");
-                      ck.setText("✓");
-                      ck.setTextSize(13);
-                      ck.setGravity(Gravity.CENTER);
-                      GradientDrawable g2 = oval(ind == 3 ? 0xFF34C759 : 0);
-                      if (ind == 3) {
-                          ck.setTextColor(0xFFFFFFFF);
-                      } else {
-                          ck.setTextColor(0);
-                          g2.setStroke(dp(2), 0x88888888);
-                      }
-                      ck.setBackground(g2);
-                      r.addView(ck, new LinearLayout.LayoutParams(dp(24), dp(24)));
-                  }
+                  if (ind >= 1) r.addView(indView(ind));
                   r.setOnClickListener(c);
                   LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
                   lp.setMargins(0, dp(compact ? 6 : 10), 0, 0);
@@ -1983,11 +1970,7 @@ jobs:
                           final String unit, int fg, final Runnable onStop, final IntConsumer live) {
                   LinearLayout c = new LinearLayout(this);
                   c.setOrientation(LinearLayout.VERTICAL);
-                  c.setPadding(dp(14), dp(compact ? 8 : 12), dp(14), dp(compact ? 8 : 12));
-                  c.setBackground(boxBg(light() ? 0x0F000000 : 0x12FFFFFF, cardR(), fg != DLG && !compact));
-                  LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-1, -2);
-                  clp.setMargins(0, dp(6), 0, 0);
-                  c.setLayoutParams(clp);
+                  c.setPadding(dp(12), dp(compact ? 6 : 10), dp(12), dp(6));
                   final TextView tv = new TextView(this);
                   tv.setTextColor(fg);
                   tv.setTextSize(compact ? 12 : 14);
@@ -2020,7 +2003,8 @@ jobs:
               }
 
               void colorDialog(String title, int cur, final IntConsumer cb) {
-                  ScrollView sv = sview();
+                  ScrollView sv = new ScrollView(this);
+                  sv.setVerticalScrollBarEnabled(false);
                   LinearLayout box = new LinearLayout(this);
                   box.setOrientation(LinearLayout.VERTICAL);
                   box.setPadding(dp(16), dp(8), dp(16), dp(8));
@@ -2029,8 +2013,7 @@ jobs:
                   final TextView hx = new TextView(this);
                   hx.setText(hex(cur));
                   hx.setTextColor(DLG);
-                  hx.setPadding(dp(14), dp(10), dp(14), dp(10));
-                  hx.setBackground(boxBg(0x1AFFFFFF, cardR(), false));
+                  hx.setPadding(0, dp(8), 0, 0);
                   cp.setListener(c -> hx.setText(hex(c)));
                   for (int r = 0; r < 2; r++) {
                       LinearLayout rowL = new LinearLayout(this);
@@ -2048,9 +2031,7 @@ jobs:
                       box.addView(rowL);
                   }
                   box.addView(cp, new LinearLayout.LayoutParams(-1, -2));
-                  LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(-1, -2);
-                  hl.topMargin = dp(8);
-                  box.addView(hx, hl);
+                  box.addView(hx);
                   sv.addView(box);
                   new AlertDialog.Builder(this).setTitle(title).setView(sv)
                           .setPositiveButton(t("تأیید", "OK"), (d, w) -> cb.accept(cp.getColor()))
@@ -2139,8 +2120,10 @@ jobs:
               }
 
               // walks a page: untagged texts get the settings font and size (not on home),
-              // texts tagged "ic" / "icf" get the icon/folder font
+              // texts tagged "ic" / "icf" get the icon/folder font; every scroll bar is switched off
               void walk(View v, boolean homePage) {
+                  if (v instanceof ScrollView) ((ScrollView) v).setVerticalScrollBarEnabled(false);
+                  if (v instanceof HorizontalScrollView) ((HorizontalScrollView) v).setHorizontalScrollBarEnabled(false);
                   if (v instanceof TextView) {
                       TextView tv = (TextView) v;
                       Object tg = v.getTag();
@@ -2257,7 +2240,6 @@ jobs:
                   getWindow().setStatusBarColor(barC);
                   getWindow().setNavigationBarColor(barC);
                   getWindow().getDecorView().setSystemUiVisibility(0);
-                  buildGlass();
                   View v;
                   if (page == SETTINGS) v = settingsPage(fg);
                   else if (page == HPAGE) v = homeSetPage(fg);
@@ -2279,9 +2261,14 @@ jobs:
                   else if (page == RESTORE) v = restorePage(fg);
                   else v = homePage(fg);
                   v.setLayoutDirection(fa ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR);
+                  menuRoot = mp ? v : null;
                   if (mp) v.setBackground(menuBgDrawable());
                   baseSz.clear();
                   walk(v, page == HOME);
+                  // glass boxes that show a piece of the menu picture are redrawn while the page scrolls
+                  if (mp && glass() && mbgBmp != null && v instanceof ScrollView) {
+                      v.setOnScrollChangeListener((vv, x, y, ox, oy) -> invalidateGlass(vv));
+                  }
                   int from = shownPage;
                   shownPage = page;
                   swap(v, transDir(from, page));
@@ -2303,30 +2290,34 @@ jobs:
                       ovLayer = new FrameLayout(this);
                       ovLayer.setClipChildren(false);
                   }
-                  DisplayMetrics dm = getResources().getDisplayMetrics();
                   LinearLayout root = new LinearLayout(this);
                   root.setOrientation(LinearLayout.VERTICAL);
                   root.setBackgroundColor(pbg());
                   root.setClipChildren(false);
                   root.setPadding(dp(12), dp(12), dp(12), dp(8));
                   FrameLayout head = new FrameLayout(this);
-                  head.setClipChildren(false);
                   headV = head;
                   normalBar = homeBar(fg);
-                  if (sp.getBoolean("topFrame", false)) {
-                      // a frame around the icons and the counter boxes
-                      head.setBackground(boxBg(sp.getInt("box_bg", 0x33FFFFFF), cardR()));
-                      head.setPadding(dp(8), 0, dp(8), 0);
+                  topBoxV = null;
+                  LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-1, -2);
+                  if (sp.getBoolean("topBoxOn", false)) {
+                      // frame around the hamburger, the plus and the counters (its length and width are adjustable)
+                      View tb = new View(this);
+                      tb.setBackground(new FrameDrawable(sp.getInt("topBoxBg", 0x6628282C), false,
+                              dp(22), dp(3), null, 1f, 0.5f, 0.5f, 0));
+                      head.addView(tb, new FrameLayout.LayoutParams(-1, -1));
+                      topBoxV = tb;
+                      int availW = getResources().getDisplayMetrics().widthPixels - dp(24);
+                      hlp = new LinearLayout.LayoutParams(availW * sp.getInt("topBoxW", 100) / 100,
+                              dp(sp.getInt("topBoxH", 56)));
+                      hlp.gravity = Gravity.CENTER_HORIZONTAL;
+                      hlp.bottomMargin = dp(4);
+                      normalBar.setPadding(dp(10), 0, dp(10), 0);
                       head.addView(normalBar, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER_VERTICAL));
-                      LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(
-                              (int) ((dm.widthPixels - dp(24)) * sp.getInt("topFrW", 100) / 100f),
-                              dp(sp.getInt("topFrH", 56)));
-                      hp.gravity = Gravity.CENTER_HORIZONTAL;
-                      root.addView(head, hp);
                   } else {
                       head.addView(normalBar, new FrameLayout.LayoutParams(-1, -2));
-                      root.addView(head);
                   }
+                  root.addView(head, hlp);
                   topLineV = null;
                   if (sp.getBoolean("topLine", false)) {
                       View tl = new View(this);
@@ -2348,32 +2339,28 @@ jobs:
 
                   FrameLayout mid = new FrameLayout(this);
                   mid.setClipChildren(false);
-                  // home frame: a panel like the immersive folder, with its own horizontal / vertical size
+                  // home frame: a panel like the immersive folder, from the top of the dock up to the top icons
                   final boolean framed = sp.getBoolean("hfOn", false);
-                  View gv = gridScroll(fg);
-                  gridView = gv;
                   if (framed) {
-                      Pct fr = new Pct(this);
-                      fr.pw = sp.getInt("hfW", 100) / 100f;
-                      fr.ph = sp.getInt("hfH", 100) / 100f;
-                      fr.setClipChildren(false);
                       frameV = new View(this);
                       frameV.setBackground(new FrameDrawable(sp.getInt("hfBg", 0x6628282C), sp.getBoolean("hf3d", false),
                               dp(26), dp(3), hfSrc, sp.getInt("hfZoom", 100) / 100f, sp.getInt("hfPx", 50) / 100f,
                               sp.getInt("hfPy", 50) / 100f, sp.getInt("hfFade", 0)));
-                      fr.addView(frameV, new FrameLayout.LayoutParams(-1, -1));
-                      fr.addView(gv, new FrameLayout.LayoutParams(-1, -1));
-                      FrameLayout.LayoutParams fpp = new FrameLayout.LayoutParams(-1, -1,
-                              Gravity.CENTER_HORIZONTAL | Gravity.CENTER_VERTICAL);
+                      FrameLayout.LayoutParams fpp = new FrameLayout.LayoutParams(-1, -1);
                       if (dockTop) fpp.topMargin = dockReserve(); else fpp.bottomMargin = dockReserve();
-                      mid.addView(fr, fpp);
-                  } else {
-                      mid.addView(gv, new FrameLayout.LayoutParams(-1, -1));
+                      mid.addView(frameV, fpp);
                   }
+                  View gv = gridScroll(fg);
+                  gridView = gv;
                   if (openFolder != null && !animFolder) {
                       gv.setAlpha(1f - sp.getInt("fpDim", 25) / 100f);
                       if (frameV != null) frameV.setAlpha(1f - sp.getInt("fpDim", 25) / 100f);
                   }
+                  FrameLayout.LayoutParams gvp = new FrameLayout.LayoutParams(-1, -1);
+                  if (framed) {
+                      if (dockTop) gvp.topMargin = dockReserve(); else gvp.bottomMargin = dockReserve();
+                  }
+                  mid.addView(gv, gvp);
                   // the dock floats over the grid, which scrolls behind it
                   mid.addView(dockBox, new FrameLayout.LayoutParams(-1, -2, dockTop ? Gravity.TOP : Gravity.BOTTOM));
                   trashBtn = trashView();
@@ -2421,30 +2408,29 @@ jobs:
 
               FrameLayout homeBar(int fg) {
                   FrameLayout h = new FrameLayout(this);
-                  h.setClipChildren(false);
                   countBarV = countBar(fg);
                   h.addView(countBarV, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
-
-                  int mw = sp.getInt("hm_w", 48), mh = sp.getInt("hm_h", 40);
-                  homeMenuV = topIcon(R.drawable.ic_menu, fg, mw, mh, v -> {
+                  int dsz = sp.getInt("home_btn_sz", 40);
+                  homeMenuV = iconBtn(R.drawable.ic_menu, fg, v -> {
                       if (menuHold) { menuHold = false; return; }
                       plusOpen = false;
                       page = SETTINGS;
                       show();
                   });
+                  styleTop((ImageView) homeMenuV, fg);
                   holdOne(homeMenuV, () -> topBtnMenu());
-                  h.addView(homeMenuV, new FrameLayout.LayoutParams(dp(mw), dp(mh), Gravity.LEFT | Gravity.CENTER_VERTICAL));
-                  homeMenuV.setTranslationX(dp(sp.getInt("hm_px", 0)));
-                  homeMenuV.setTranslationY(dp(sp.getInt("hm_py", 0)));
+                  homeMenuV.setTranslationX(dp(sp.getInt("hamX", 0)));
+                  homeMenuV.setTranslationY(dp(sp.getInt("hamY", 0)));
+                  h.addView(homeMenuV, absHome(Gravity.LEFT, sp.getInt("hamW", dsz), sp.getInt("hamH", dsz)));
 
-                  int pw = sp.getInt("pl_w", 48), ph = sp.getInt("pl_h", 40);
-                  homePlusV = topIcon(R.drawable.ic_plus, fg, pw, ph, v -> {
+                  homePlusV = iconBtn(R.drawable.ic_plus, fg, v -> {
                       if (plusOpen) closePlus();
                       else { plusOpen = true; show(); }
                   });
-                  h.addView(homePlusV, new FrameLayout.LayoutParams(dp(pw), dp(ph), Gravity.RIGHT | Gravity.CENTER_VERTICAL));
-                  homePlusV.setTranslationX(dp(sp.getInt("pl_px", 0)));
-                  homePlusV.setTranslationY(dp(sp.getInt("pl_py", 0)));
+                  styleTop((ImageView) homePlusV, fg);
+                  homePlusV.setTranslationX(dp(sp.getInt("plusX", 0)));
+                  homePlusV.setTranslationY(dp(sp.getInt("plusY", 0)));
+                  h.addView(homePlusV, absHome(Gravity.RIGHT, sp.getInt("plusW", dsz), sp.getInt("plusH", dsz)));
                   return h;
               }
 
@@ -2452,6 +2438,8 @@ jobs:
                   LinearLayout c = new LinearLayout(this);
                   c.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
                   c.setGravity(Gravity.CENTER);
+                  c.setTranslationX(dp(sp.getInt("box_px", 0)));
+                  c.setTranslationY(dp(sp.getInt("box_py", 0)));
 
                   int appsHome = 0;
                   for (Item it : home) {
@@ -2467,9 +2455,6 @@ jobs:
 
                   c.addView(countBox(folderCount, fg));
                   c.addView(countBox(appsHome, fg));
-                  // placement of the counter boxes (vertical / horizontal shift)
-                  c.setTranslationX(dp(sp.getInt("box_px", 0)));
-                  c.setTranslationY(dp(sp.getInt("box_py", 0)));
                   return c;
               }
 
@@ -2485,7 +2470,10 @@ jobs:
                   tv.setTextSize(sc(sp.getInt("box_ts", 18)));
                   tv.setTextColor(sp.getInt("box_tc", fg));
                   tv.setTypeface(weightFace(sp.getInt("box_tw", 3)));
-                  tv.setBackground(boxBg(sp.getInt("box_bg", 0x33FFFFFF), dp(16)));
+                  GradientDrawable g = new GradientDrawable();
+                  g.setCornerRadius(dp(16));
+                  g.setColor(sp.getInt("box_bg", 0x33FFFFFF));
+                  tv.setBackground(g);
                   LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                           dp(sc(sp.getInt("box_w", 62))), dp(sc(sp.getInt("box_h", 40))));
                   lp.setMargins(dp(2), 0, dp(2), 0);
@@ -2510,14 +2498,15 @@ jobs:
               }
 
               void boxMenu() {
-                  ScrollView sv = sview();
+                  ScrollView sv = new ScrollView(this);
+                  sv.setVerticalScrollBarEnabled(false);
                   LinearLayout box = new LinearLayout(this);
                   box.setOrientation(LinearLayout.VERTICAL);
                   box.setPadding(dp(16), dp(8), dp(16), dp(8));
-                  // placement: first lever vertical, second lever horizontal
+                  // placement of the two counters together: first lever = horizontal, second = vertical
                   box.addView(accordionGroup(0xFF00ACC1, "↔", t("جای‌گیری", "Placement"), DLG,
-                          slider(t("جابجایی طولی", "Vertical shift"), "box_py", -100, 100, 0, " dp", DLG, null),
-                          slider(t("جابجایی عرضی", "Horizontal shift"), "box_px", -100, 100, 0, " dp", DLG, null)));
+                          slider(t("جابجایی طولی", "Horizontal move"), "box_px", -100, 100, 0, " dp", DLG, null),
+                          slider(t("جابجایی عرضی", "Vertical move"), "box_py", -30, 30, 0, " dp", DLG, null)));
                   box.addView(accordionRow(0xFF2196F3, "📐", t("عرض کادرها", "Boxes width"), "box_w", 40, 140, 62, " dp", DLG, null));
                   box.addView(accordionRow(0xFF2196F3, "📐", t("ارتفاع کادرها", "Boxes height"), "box_h", 28, 80, 40, " dp", DLG, null));
                   box.addView(accordionRow(0xFF4CAF50, "🔤", t("اندازه اعداد", "Numbers size"), "box_ts", 10, 40, 18, " sp", DLG, null));
@@ -2531,6 +2520,8 @@ jobs:
                           .setPositiveButton(t("تأیید", "OK"), null)
                           .setOnDismissListener(d -> show()).show();
               }
+          EOF
+          cat >> app/src/main/java/com/mylauncher/MainActivity.java <<'EOF'
 
               View selectionBar(int fg) {
                   LinearLayout b = new LinearLayout(this);
@@ -2894,7 +2885,6 @@ jobs:
 
               View gridScroll(final int fg) {
                   DisplayMetrics dm = getResources().getDisplayMetrics();
-                  final boolean framed = sp.getBoolean("hfOn", false);
                   // the row count is fixed now; "Horizontal spacing" only moves rows 2, 3, ... (the first row never moves)
                   int cols = sp.getInt("gridCols", 4), rows = 7;
                   int rowGapPx = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_MM,
@@ -2903,8 +2893,7 @@ jobs:
                   boolean folderNames = !hide && sp.getBoolean("fpNameHome", true);
                   int iconSz = sp.getInt("iconSz", 56);
                   int folderSz = sp.getBoolean("folderSync", false) ? iconSz : sp.getInt("folderSz", 56);
-                  int availW = (int) ((dm.widthPixels - dp(24)) * (framed ? sp.getInt("hfW", 100) / 100f : 1f));
-                  int cellW = availW / cols;
+                  int cellW = (dm.widthPixels - dp(24)) / cols;
                   int iconPx = Math.min(dp(iconSz), cellW - dp(4));
                   int folderPx = Math.min(dp(folderSz), cellW - dp(4));
                   int reserve = dp(150) + (sp.getBoolean("dockOn1", true) ? dp(sp.getInt("dockH1", 80) + 14) : 0);
@@ -2914,13 +2903,17 @@ jobs:
                   int fts = sp.contains("fpTsBot") ? sp.getInt("fpTsBot", 12) : ts;
 
                   // the home page scrolls behind the dock and fades out there
-                  // (with the home frame on, the page is clipped to the rounded frame and fades at both edges)
+                  // (with the home frame on, the page is cut to the rounded frame and fades at its top and bottom edge)
+                  final boolean framed = sp.getBoolean("hfOn", false);
                   final boolean fadeTop = sp.getInt("dockPos1", 0) == 1;
                   final int dres = framed ? 0 : dockReserve();
                   final int fadeLen = framed ? dp(24) : dp(40);
+                  final int topFade = framed ? dp(10) : fadeLen;
+                  final float clipR = dp(26);
                   ScrollView sv = new ScrollView(this) {
                       final Paint maskP = new Paint();
                       final Path clipP = new Path();
+                      final RectF clipRf = new RectF();
                       { maskP.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN)); }
 
                       @Override
@@ -2931,10 +2924,10 @@ jobs:
                           c.save();
                           c.translate(sx, sy);
                           if (framed) {
-                              // nothing may leave the rounded frame while scrolling
-                              float in = dp(3), rad = Math.max(0f, dp(26) - in);
+                              // nothing may leave the rounded frame, not even at the corners
+                              clipRf.set(0, 0, w, h);
                               clipP.reset();
-                              clipP.addRoundRect(new RectF(in, in, w - in, h - in), rad, rad, Path.Direction.CW);
+                              clipP.addRoundRect(clipRf, clipR, clipR, Path.Direction.CW);
                               c.clipPath(clipP);
                           }
                           int layer = c.saveLayer(0, 0, w, h, null);
@@ -2942,9 +2935,9 @@ jobs:
                           super.dispatchDraw(c);
                           c.translate(sx, sy);
                           if (framed) {
-                              maskP.setShader(new LinearGradient(0, 0, 0, fadeLen,
+                              maskP.setShader(new LinearGradient(0, 0, 0, topFade,
                                       0x00FFFFFF, 0xFFFFFFFF, Shader.TileMode.CLAMP));
-                              c.drawRect(0, 0, w, fadeLen, maskP);
+                              c.drawRect(0, 0, w, topFade, maskP);
                               maskP.setShader(new LinearGradient(0, h - fadeLen, 0, h,
                                       0xFFFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
                               c.drawRect(0, h - fadeLen, w, h, maskP);
@@ -2965,6 +2958,7 @@ jobs:
                       }
                   };
                   sv.setVerticalScrollBarEnabled(false);
+                  sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
                   // the scroll position is kept: it only goes back to the top when the app is fully closed
                   final int keepY = homeScrollY;
                   final ScrollView svf = sv;
@@ -3000,8 +2994,7 @@ jobs:
                       views.add(c);
                   }
                   LinearLayout rowsBox = buildRows(views, cols, cellH, rowGapPx);
-                  int topPad = dp(12) + (fadeTop ? dres + fadeLen : (framed ? fadeLen : 0));
-                  rowsBox.setPadding(0, topPad, 0, dp(44) + (fadeTop ? 0 : dres));
+                  rowsBox.setPadding(0, dp(12) + (fadeTop ? dres + fadeLen : 0), 0, dp(44) + (fadeTop ? 0 : dres));
                   col.addView(rowsBox, new LinearLayout.LayoutParams(-1, -2));
                   if (views.isEmpty()) {
                       TextView e = new TextView(this);
@@ -3175,38 +3168,6 @@ jobs:
                   } catch (Throwable e) {
                       return false;
                   }
-              }
-
-              // immersive folder: pulling down at the top edge (after the content has scrolled to its end) closes the folder
-              void pullClose(final ScrollView sv) {
-                  sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
-                  final float[] st = {-1f};
-                  sv.setOnTouchListener((w, ev) -> {
-                      switch (ev.getActionMasked()) {
-                          case MotionEvent.ACTION_DOWN:
-                              st[0] = -1f;
-                              break;
-                          case MotionEvent.ACTION_MOVE:
-                              if (sv.canScrollVertically(-1)) {
-                                  st[0] = -1f;
-                              } else if (st[0] < 0) {
-                                  st[0] = ev.getRawY();
-                              } else {
-                                  if (ev.getRawY() < st[0]) st[0] = ev.getRawY();
-                                  if (ev.getRawY() - st[0] > dp(90) && !closing && openFolder != null) {
-                                      st[0] = -1f;
-                                      vib(15);
-                                      closeFolder();
-                                  }
-                              }
-                              break;
-                          case MotionEvent.ACTION_UP:
-                          case MotionEvent.ACTION_CANCEL:
-                              st[0] = -1f;
-                              break;
-                      }
-                      return false;
-                  });
               }
 
               void closeFolder() {
@@ -3529,7 +3490,7 @@ jobs:
               }
 
               // ---- plus menu: grows out of the + button and shrinks back into it ----
-              // the menu is only removed from the page at the end (no rebuild of the whole page, so no lag)
+              // closing no longer rebuilds the whole page at the end (that caused the lag in the last frames)
               void closePlus() {
                   if (plusMenuV == null) {
                       plusOpen = false;
@@ -3538,16 +3499,19 @@ jobs:
                   }
                   final View m = plusMenuV;
                   plusMenuV = null;
-                  final View wrapV = (View) m.getParent();
+                  plusOpen = false;
                   m.setLayerType(View.LAYER_TYPE_HARDWARE, null);
                   m.animate().alpha(0f).scaleX(0.1f).scaleY(0.1f).setDuration(200)
                           .setInterpolator(new AccelerateInterpolator())
                           .withEndAction(() -> {
-                              plusOpen = false;
-                              m.setLayerType(View.LAYER_TYPE_NONE, null);
-                              if (wrapV != null && wrapV.getParent() instanceof ViewGroup) {
-                                  ((ViewGroup) wrapV.getParent()).removeView(wrapV);
-                              } else {
+                              try {
+                                  View wrap = (View) m.getParent();
+                                  if (wrap != null && wrap.getParent() instanceof ViewGroup) {
+                                      ((ViewGroup) wrap.getParent()).removeView(wrap);
+                                  } else {
+                                      show();
+                                  }
+                              } catch (Throwable e) {
                                   show();
                               }
                           }).start();
@@ -3562,7 +3526,7 @@ jobs:
                   m.setOrientation(LinearLayout.VERTICAL);
                   m.setPadding(dp(12), dp(10), dp(16), dp(10));
                   GradientDrawable g = new GradientDrawable();
-                  g.setCornerRadius(dp(26));
+                  g.setCornerRadius(dp(22));
                   g.setColor(0xF5222228);
                   g.setStroke(dp(1), 0x33888888);
                   m.setBackground(g);
@@ -3663,19 +3627,20 @@ jobs:
                       sp.edit().putBoolean("fpFull", !fullOn).apply();
                       show();
                   }));
-                  // when ticked, the boxes of the immersive folder top (name, plus, gear) disappear; only their icons stay
+                  // boxes of the immersive folder header: when ticked the boxes disappear, the icons stay
                   final boolean noBox = sp.getBoolean("fpNoBox", false);
-                  sb.addView(row(0xFF8E24AA, "▢", t("کادرها", "Boxes"),
-                          t("حذف کادرهای بالای پوشه فراگیر؛ آیکون‌ها می‌مانند", "Remove the boxes on top of the immersive folder; icons stay"),
+                  sb.addView(row(0xFF26A69A, "◻", t("کادرها", "Boxes"),
+                          t("حذف کادرهای سربرگ پوشه فراگیر (آیکون‌ها می‌مانند)",
+                                  "Remove the header boxes of the immersive folder (icons stay)"),
                           noBox ? 3 : 2, fg, w -> {
                       sp.edit().putBoolean("fpNoBox", !noBox).apply();
                       show();
                   }));
-                  // ticked = rise animation from the closed folder; unticked = rise only once, then crossfade between folders
+                  // animation: on = the grow animation plays every time; off = it plays once, then crossfade
                   final boolean animOn = sp.getBoolean("fpAnim", true);
-                  sb.addView(row(0xFF00ACC1, "🎬", t("انیمیشن", "Animation"),
-                          t("بدون تیک: فقط اولین باز شدن بالا می‌آید، جایگزینی پوشه با Crossfade",
-                                  "Off: rise only on the first open, folders switch with a crossfade"),
+                  sb.addView(row(0xFFEC407A, "✨", t("انیمیشن", "Animation"),
+                          t("خاموش: انیمیشن فقط برای باز شدن اولین پوشه فراگیر، جایگزینی با Crossfade",
+                                  "Off: grow animation only for the first immersive folder, then crossfade"),
                           animOn ? 3 : 2, fg, w -> {
                       sp.edit().putBoolean("fpAnim", !animOn).apply();
                       show();
@@ -3736,7 +3701,8 @@ jobs:
                   LinearLayout r = vbox();
                   r.addView(topBar(t("تنظیمات پوشه", "Folder Settings"), fg));
                   r.addView(folderSettingsBody(null, fg, null, false));
-                  ScrollView sv = sview();
+                  ScrollView sv = new ScrollView(this);
+                  sv.setVerticalScrollBarEnabled(false);
                   sv.setBackgroundColor(pbg());
                   sv.addView(r);
                   return sv;
@@ -3771,20 +3737,20 @@ jobs:
                   return (f.color & 0x00FFFFFF) | ((sp.getInt("fpAlpha", 80) * 255 / 100) << 24);
               }
 
-              // same color, opacity, corner radius and thin edge line as the open folder panel
-              // (null when the "Boxes" option removes the boxes of the immersive folder top)
+              // same color, opacity, corner radius and thin edge line as the open folder panel;
+              // with the "Boxes" option on there is no box at all (icons keep their place)
               Drawable tabBg(Item f) {
                   if (sp.getBoolean("fpNoBox", false)) return null;
                   return new TabDrawable(panelColor(f), 0x33FFFFFF, dp(26), dp(9), Math.max(1, dp(1)));
               }
 
-              // thin line under the folder name and icons, in a lighter tone of the folder color
-              int lineColor(Item f) {
+              // very thin line under the header of the popup folder, in a lighter shade of the folder color
+              int headLineColor(Item f) {
                   int c = f.color == 0x66FFFFFF ? 0x3A28282C : f.color;
                   int r = Color.red(c), g = Color.green(c), b = Color.blue(c);
-                  r += (255 - r) * 35 / 100;
-                  g += (255 - g) * 35 / 100;
-                  b += (255 - b) * 35 / 100;
+                  r += (255 - r) * 45 / 100;
+                  g += (255 - g) * 45 / 100;
+                  b += (255 - b) * 45 / 100;
                   return Color.argb(0xD0, r, g, b);
               }
 
@@ -3882,8 +3848,8 @@ jobs:
                   snapPanel = null;
                   snapTabs = null;
                   final boolean switching = full && anim && sPanel != null && sTabs != null && ov != null;
-                  // "Animation" unticked: a second folder replaces the first with a soft crossfade (no rising)
-                  final boolean xf = switching && !sp.getBoolean("fpAnim", true);
+                  // animation option off: replacing one immersive folder by another is a smooth crossfade
+                  final boolean xfade = switching && !sp.getBoolean("fpAnim", true);
                   final boolean bridgeOn = full && fromDock;
                   final float prevCxF = prevCx;
                   final boolean[] opening = {anim};
@@ -3897,13 +3863,14 @@ jobs:
                   final int ph = (int) Math.min(dm.heightPixels * 0.7f, dm.heightPixels * 0.36f * fpSize / 100f);
                   final LinearLayout panel = new LinearLayout(this);
                   panel.setOrientation(LinearLayout.VERTICAL);
+                  // the header line of the popup folder reaches the side walls through the padding
                   panel.setClipToPadding(false);
                   final GradientDrawable pg = new GradientDrawable();
                   pg.setCornerRadius(dp(26));
                   pg.setColor(panelColor(f));
                   pg.setStroke(dp(1), 0x33FFFFFF);
                   panel.setBackground(pg);
-                  panel.setPadding(dp(12), dp(12), dp(12), dp(12));
+                  panel.setPadding(dp(12), dp(8), dp(12), dp(12));
                   panel.setClickable(true);
                   curPanel = panel;
 
@@ -3924,12 +3891,6 @@ jobs:
                   } else {
                       gTabs = null;
                   }
-                  // thin line under the name and the top icons: from the left wall of the folder to the right wall,
-                  // as high as possible (just where the round corners let it touch both walls)
-                  View lineV = new View(this);
-                  lineV.setBackgroundColor(lineColor(f));
-                  LinearLayout.LayoutParams lnp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1) / 2));
-                  lnp.setMargins(-dp(12), full ? dp(7) : 0, -dp(12), 0);
                   if (!full) {
                       FrameLayout hd = new FrameLayout(this);
                       hd.addView(nameV, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
@@ -3937,11 +3898,15 @@ jobs:
                       pll.setMargins(0, 0, dp(32), 0);
                       hd.addView(plV, pll);
                       hd.addView(grV, new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.RIGHT | Gravity.CENTER_VERTICAL));
-                      panel.addView(hd, new LinearLayout.LayoutParams(-1, dp(32)));
-                      panel.addView(lineV, lnp);
+                      panel.addView(hd, new LinearLayout.LayoutParams(-1, dp(28)));
+                      // thin line under the name and the header icons: wall to wall, as high as possible
+                      View hl = new View(this);
+                      hl.setBackgroundColor(headLineColor(f));
+                      LinearLayout.LayoutParams hll = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1) / 2));
+                      hll.setMargins(-dp(12), 0, -dp(12), 0);
+                      panel.addView(hl, hll);
                   } else {
                       // immersive: the tabs live in the layer above the page, attached to the folder top
-                      panel.addView(lineV, lnp);
                       nameV.setAlpha(0f);
                       grp.setAlpha(0f);
                       grp.setGravity(Gravity.CENTER_VERTICAL);
@@ -3958,11 +3923,11 @@ jobs:
                   }
 
                   if (folderSettings) {
-                      ScrollView ss = sview();
+                      ScrollView ss = new ScrollView(this);
+                      ss.setVerticalScrollBarEnabled(false);
+                      ss.setOverScrollMode(View.OVER_SCROLL_NEVER);
                       ss.addView(folderSettingsBody(f, fg, () -> show(), true));
-                      LinearLayout.LayoutParams ssl = new LinearLayout.LayoutParams(-1, 0, 1);
-                      ssl.topMargin = dp(4);
-                      panel.addView(ss, ssl);
+                      panel.addView(ss, new LinearLayout.LayoutParams(-1, 0, 1));
                       if (animS) {
                           ss.setTranslationY(-dp(40));
                           ss.setAlpha(0f);
@@ -3970,7 +3935,9 @@ jobs:
                                   .setInterpolator(new DecelerateInterpolator()).start();
                       }
                   } else {
-                      ScrollView bs = sview();
+                      ScrollView bs = new ScrollView(this);
+                      bs.setVerticalScrollBarEnabled(false);
+                      bs.setOverScrollMode(View.OVER_SCROLL_NEVER);
                       int fpCols = sp.getInt("fpCols", 3);
                       int fpRowGap = Math.max(-3, Math.min(5, sp.getInt("fpRowGap", 2)));
                       int rowGapPx = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_MM, fpRowGap, dm);
@@ -3999,14 +3966,11 @@ jobs:
                           });
                           pv.add(c);
                       }
+                      // the row gap is applied only between row 2, 3, ...; the first row keeps a small fixed distance from the line
                       LinearLayout rowsBox = buildRows(pv, fpCols, 0, rowGapPx);
-                      rowsBox.setPadding(0, 0, 0, dp(8));
+                      rowsBox.setPadding(0, full ? 0 : dp(6), 0, dp(8));
                       bs.addView(rowsBox, new FrameLayout.LayoutParams(-1, -2));
-                      // the gap between the line and the first row of icons equals the row spacing
-                      LinearLayout.LayoutParams bsl = new LinearLayout.LayoutParams(-1, 0, 1);
-                      bsl.topMargin = rowGapPx;
-                      panel.addView(bs, bsl);
-                      if (full) pullClose(bs);
+                      panel.addView(bs, new LinearLayout.LayoutParams(-1, 0, 1));
                       if (f.apps.isEmpty()) {
                           TextView e = new TextView(this);
                           e.setText(t("با دکمه + برنامه اضافه کنید", "Use + to add apps"));
@@ -4014,13 +3978,13 @@ jobs:
                           e.setTextSize(12);
                           e.setAlpha(0.7f);
                           e.setGravity(Gravity.CENTER);
-                          panel.addView(e, panel.indexOfChild(bs));
+                          panel.addView(e, full ? 0 : 2);
                       }
                   }
                   final int dres2 = dockReserve();
                   final boolean dTop2 = sp.getInt("dockPos1", 0) == 1;
                   wrap.setPadding(0, dTop2 ? dres2 : 0, 0, dTop2 ? 0 : dres2);
-                  // switching folders: a picture of the previous folder stays underneath and fades out unseen
+                  // switching folders: a picture of the previous folder stays underneath and fades out
                   final ImageView gPanel;
                   if (switching) {
                       gPanel = new ImageView(this);
@@ -4034,7 +3998,7 @@ jobs:
                           : new FrameLayout.LayoutParams(pw, ph, Gravity.CENTER));
                   final FrameLayout ghost = folderBox(f, openW);
                   ghost.setAlpha(0f);
-                  final boolean fadeSmall = sp.getBoolean("fpHideSmall", true) && !bridgeOn && !xf;
+                  final boolean fadeSmall = sp.getBoolean("fpHideSmall", true) && !bridgeOn;
                   final int blurLvl = sp.getInt("fpBlur", 0);
                   final int bc1 = panelColor(f);
                   final int bc2 = f.color == 0x66FFFFFF ? 0x3A28282C : f.color;
@@ -4049,12 +4013,11 @@ jobs:
                       final float pcy = wl[1] + panel.getTop() + panel.getHeight() / 2f;
                       panel.setPivotX(panel.getWidth() / 2f);
                       panel.setPivotY(panel.getHeight() / 2f);
-                      // crossfade: the panel stays at its full size and place, it only fades in
-                      final float tx0 = xf ? 0f : openCx - pcx;
-                      final float ty0 = xf ? 0f : openCy - pcy;
-                      final float sx0 = xf ? 1f : Math.max(0.05f, openW / (float) Math.max(1, panel.getWidth()));
-                      final float sy0 = xf ? 1f : Math.max(0.05f, openH / (float) Math.max(1, panel.getHeight()));
-                      final float r0 = xf ? dp(26) : (openW / 2.8f) / Math.max(0.05f, (sx0 + sy0) / 2f);
+                      final float tx0 = openCx - pcx;
+                      final float ty0 = openCy - pcy;
+                      final float sx0 = Math.max(0.05f, openW / (float) Math.max(1, panel.getWidth()));
+                      final float sy0 = Math.max(0.05f, openH / (float) Math.max(1, panel.getHeight()));
+                      final float r0 = (openW / 2.8f) / Math.max(0.05f, (sx0 + sy0) / 2f);
                       final float rEnd = dp(26);
                       final boolean fullFade = sp.getInt("fpAlpha", 80) >= 100;
                       final float dimEnd = fullFade ? 0f : 1f - sp.getInt("fpDim", 25) / 100f;
@@ -4090,10 +4053,6 @@ jobs:
                           grp.setLayoutParams(glp);
                           Ctl cn = mk(nameV, nw, tabH, viewL + nw / 2f, cyEnd);
                           Ctl cg = mk(grp, gw, tabH, gCx, cyEnd);
-                          if (xf) {
-                              cn.sx = cn.ex; cn.sy = cn.ey; cn.s0 = 1f;
-                              cg.sx = cg.ex; cg.sy = cg.ey; cg.s0 = 1f;
-                          }
                           ctls.add(cn);
                           ctls.add(cg);
                       }
@@ -4103,7 +4062,7 @@ jobs:
                                       panel.getWidth(), panel.getHeight(), blurLvl, dimEnd);
                               BitmapDrawable bd = new BitmapDrawable(getResources(), bb);
                               panel.setBackground(new LayerDrawable(new Drawable[]{bd, pg}));
-                              panel.setPadding(dp(12), dp(12), dp(12), dp(12));
+                              panel.setPadding(dp(12), dp(8), dp(12), dp(12));
                               panel.setOutlineProvider(new ViewOutlineProvider() {
                                   @Override
                                   public void getOutline(View v, Outline o) {
@@ -4121,26 +4080,30 @@ jobs:
                       }
                       final Consumer<Float> ap = p -> {
                           final boolean sw = switching && opening[0];
-                          float sxp = sx0 + (1f - sx0) * p;
-                          float syp = sy0 + (1f - sy0) * p;
+                          // crossfade: no moving or scaling, the new folder only fades in over the old one
+                          final boolean xf = sw && xfade;
+                          float sxp = xf ? 1f : sx0 + (1f - sx0) * p;
+                          float syp = xf ? 1f : sy0 + (1f - sy0) * p;
+                          float txv = xf ? 0f : tx0 * (1f - p);
+                          float tyv = xf ? 0f : ty0 * (1f - p);
                           panel.setScaleX(sxp);
                           panel.setScaleY(syp);
-                          if (closing) panel.setAlpha(Math.min(1f, p / 0.12f));
-                          else if (xf && opening[0]) panel.setAlpha(p);
-                          panel.setTranslationX(tx0 * (1f - p));
-                          panel.setTranslationY(ty0 * (1f - p));
-                          rad[0] = r0 + (rEnd - r0) * p;
+                          if (xf) panel.setAlpha(p);
+                          else if (closing) panel.setAlpha(Math.min(1f, p / 0.12f));
+                          panel.setTranslationX(txv);
+                          panel.setTranslationY(tyv);
+                          rad[0] = xf ? rEnd : r0 + (rEnd - r0) * p;
                           pg.setCornerRadius(rad[0]);
                           if (blurLvl > 0) panel.invalidateOutline();
-                          float ca = xf ? p : Math.max(0f, Math.min(1f, (p - 0.3f) / 0.7f));
+                          float ca = xf ? 1f : Math.max(0f, Math.min(1f, (p - 0.3f) / 0.7f));
                           for (int i = 0; i < panel.getChildCount(); i++) panel.getChildAt(i).setAlpha(ca);
                           for (int ci = 0; ci < ctls.size(); ci++) {
                               Ctl c = ctls.get(ci);
-                              float cx = c.sx + (c.ex - c.sx) * p;
-                              float cy = c.sy + (c.ey - c.sy) * p;
-                              float s = c.s0 + (1f - c.s0) * p;
+                              float cx = xf ? c.ex : c.sx + (c.ex - c.sx) * p;
+                              float cy = xf ? c.ey : c.sy + (c.ey - c.sy) * p;
+                              float s = xf ? 1f : c.s0 + (1f - c.s0) * p;
                               // attached to the folder: the tabs ride on the moving top edge of the panel
-                              if (att) cy = (pcy + ty0 * (1f - p)) - panel.getHeight() * syp / 2f - c.h * s / 2f;
+                              if (att) cy = (pcy + tyv) - panel.getHeight() * syp / 2f - c.h * s / 2f;
                               c.v.setScaleX(s);
                               c.v.setScaleY(s);
                               c.v.setTranslationX(cx - c.w / 2f - ovl[0]);
@@ -4151,9 +4114,9 @@ jobs:
                               gPanel.setAlpha(xf ? 1f - p : 1f - Math.max(0f, Math.min(1f, (p - 0.2f) / 0.8f)));
                           }
                           if (gTabs != null && opening[0]) gTabs.setAlpha(xf ? 1f - p : 1f - Math.min(1f, p / 0.6f));
-                          float ga = xf ? 0f : Math.max(0f, Math.min(1f, 1f - p / 0.3f));
+                          float ga = Math.max(0f, Math.min(1f, 1f - p / 0.3f));
                           ghost.setAlpha(ga);
-                          if (smallName != null) smallName.setAlpha(xf ? 0f : ga);
+                          if (smallName != null) smallName.setAlpha(ga);
                           if (gridView != null) gridView.setAlpha(sw ? dimEnd : 1f + (dimEnd - 1f) * p);
                           if (frameV != null) frameV.setAlpha(sw ? dimEnd : 1f + (dimEnd - 1f) * p);
                           if (headV != null) headV.setAlpha(1f + (chromeEnd - 1f) * p);
@@ -4161,8 +4124,8 @@ jobs:
                           if (dockBoxV != null) dockBoxV.setAlpha(1f + (chromeEnd - 1f) * p);
                           if (blurLvl > 0) applyBlur(blurMax * p);
                           if (bridgeOn && bridgeV != null) {
-                              float pcxp = pcx + tx0 * (1f - p);
-                              float pcyp = pcy + ty0 * (1f - p);
+                              float pcxp = pcx + txv;
+                              float pcyp = pcy + tyv;
                               float pwp = panel.getWidth() * (sw ? 1f : sxp);
                               float bot = sw ? pcy + panel.getHeight() / 2f : pcyp + panel.getHeight() * syp / 2f;
                               float bcx = sw ? prevCxF + (openCx - prevCxF) * p : openCx;
@@ -4181,16 +4144,16 @@ jobs:
                       folderApply = ap;
                       if (anim) {
                           ap.accept(0f);
-                          if (!xf) panel.setAlpha(1f);
+                          if (!xfade) panel.setAlpha(1f);
                           ValueAnimator va = ValueAnimator.ofFloat(0f, 1f);
-                          va.setDuration(xf ? 260 : 290);
-                          va.setInterpolator(xf ? new AccelerateDecelerateInterpolator() : new PathInterpolator(0.2f, 0f, 0f, 1f));
+                          va.setDuration(xfade ? 260 : 290);
+                          va.setInterpolator(xfade ? new AccelerateDecelerateInterpolator()
+                                  : new PathInterpolator(0.2f, 0f, 0f, 1f));
                           va.addUpdateListener(an -> ap.accept((Float) an.getAnimatedValue()));
                           va.addListener(new AnimatorListenerAdapter() {
                               @Override
                               public void onAnimationEnd(Animator an2) {
                                   opening[0] = false;
-                                  panel.setAlpha(1f);
                                   if (gPanel != null) wrap.removeView(gPanel);
                                   if (gTabs != null && ov != null) ov.removeView(gTabs);
                               }
@@ -4462,20 +4425,18 @@ jobs:
                   }
               }
           EOF
-
-          # fix in part 2: also keep a picture of the old folder when "Animation" is unticked (needed for the crossfade)
-          python3 - <<'PY'
-          p = 'app/src/main/java/com/mylauncher/MainActivity.java'
-          s = open(p, encoding='utf-8').read()
-          a = '&& immersive && fromDock && nowDock'
-          b = '&& immersive && ((fromDock && nowDock) || !sp.getBoolean("fpAnim", true))'
-          assert a in s, 'pattern not found'
-          s = s.replace(a, b)
-          open(p, 'w', encoding='utf-8').write(s)
-          PY
           cat >> app/src/main/java/com/mylauncher/MainActivity.java <<'EOF'
 
               // ================= settings =================
+              ScrollView wrapScroll(View content) {
+                  ScrollView sv = new ScrollView(this);
+                  sv.setVerticalScrollBarEnabled(false);
+                  sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
+                  sv.setBackgroundColor(pbg());
+                  sv.addView(content);
+                  return sv;
+              }
+
               View settingsPage(int fg) {
                   LinearLayout r = vbox();
                   r.addView(topBar(t("تنظیمات", "Settings"), fg));
@@ -4504,13 +4465,10 @@ jobs:
                   r.addView(row(0xFF43A047, "💾", t("پشتیبان", "Backup"),
                           t("گرفتن و فراخوانی نسخه پشتیبان تنظیمات", "Create and restore settings backups"), 0, fg,
                           v -> { page = BACKUP; show(); }));
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return wrapScroll(r);
               }
 
-              // ---------- home page: frame, frame size, 3D, frame background ----------
+              // ---------- home page: frame, 3D, frame background ----------
               View homeSetPage(int fg) {
                   LinearLayout r = vbox();
                   r.addView(topBar(t("صفحه خانگی", "Home Page"), fg));
@@ -4521,10 +4479,6 @@ jobs:
                       sp.edit().putBoolean("hfOn", !on).apply();
                       show();
                   }));
-                  // first lever: horizontal size, second lever: vertical size of the home frame
-                  r.addView(accordionGroup(0xFF29B6F6, "↔", t("سایز کادر", "Frame size"), fg,
-                          slider(t("سایز افقی", "Horizontal size"), "hfW", 50, 100, 100, "%", fg, null),
-                          slider(t("سایز عمودی", "Vertical size"), "hfH", 50, 100, 100, "%", fg, null)));
                   final boolean d3 = sp.getBoolean("hf3d", false);
                   r.addView(row(0xFF26A69A, "◈", t("سه بعدی", "3D"),
                           t("لبه‌های کادر به شکل سه بعدی", "Frame edges look 3D"),
@@ -4535,10 +4489,7 @@ jobs:
                   r.addView(row(0xFFFF7043, "🖼", t("پس‌زمینه کادر", "Frame background"),
                           t("رنگ، شفافیت و عکس کادر", "Color, transparency and picture of the frame"), 0, fg,
                           v -> { page = HFBG; show(); }));
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return wrapScroll(r);
               }
 
               // ---------- font pages ----------
@@ -4551,13 +4502,12 @@ jobs:
                   r.addView(row(0xFF00897B, "Aa", t("فونت آیکون‌ و پوشه", "Icons & folders font"),
                           t("فونت نام آیکون‌ها و پوشه‌ها", "Font of icon and folder names"), 0, fg,
                           v -> { fGrp = "i"; page = FGRP; show(); }));
-                  r.addView(textCard(t("فونت دلخواه (مثل میترا): فایل ttf یا otf را در پوشه VadLan/fonts حافظه گوشی بگذارید تا در لیست فونت‌ها بیاید.",
-                          "Custom fonts (like Mitra): put ttf or otf files in the VadLan/fonts folder of the phone storage and they will show in the font lists."),
-                          fg, 0.65f, 12));
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  TextView note = labelBox(t("فونت دلخواه (مثل میترا): فایل ttf یا otf را در پوشه VadLan/fonts حافظه گوشی بگذارید تا در لیست فونت‌ها بیاید.",
+                          "Custom fonts (like Mitra): put ttf or otf files in the VadLan/fonts folder of the phone storage and they will show in the font lists."), fg);
+                  note.setTextSize(12);
+                  note.setAlpha(0.85f);
+                  r.addView(note);
+                  return wrapScroll(r);
               }
 
               View fontRow(final String g, final String lang, int fg) {
@@ -4590,10 +4540,7 @@ jobs:
                   r.addView(accordionRow(0xFFFF9800, "🅱", t("باریکی فونت", "Font thickness"),
                           "font" + g + "_wt", 2, 10, 4, "", fg, () -> show()));
                   r.addView(fontRow(g, other, fg));
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return wrapScroll(r);
               }
 
               View fontPickPage(int fg) {
@@ -4607,7 +4554,7 @@ jobs:
                       LinearLayout it = new LinearLayout(this);
                       it.setGravity(Gravity.CENTER_VERTICAL);
                       it.setPadding(dp(14), dp(12), dp(14), dp(12));
-                      it.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, cardR()));
+                      it.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, BOX_R));
                       LinearLayout col = new LinearLayout(this);
                       col.setOrientation(LinearLayout.VERTICAL);
                       TextView nm = new TextView(this);
@@ -4642,10 +4589,7 @@ jobs:
                       lp.setMargins(0, dp(10), 0, 0);
                       r.addView(it, lp);
                   }
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return wrapScroll(r);
               }
 
               View mockPage(int fg) {
@@ -4695,10 +4639,7 @@ jobs:
                       show();
                   }));
 
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return wrapScroll(r);
               }
 
               void setTile(boolean on) {
@@ -4780,6 +4721,15 @@ jobs:
                   }
               }
 
+              // the hex code field sits in a box like the other options
+              void styleHexField(EditText et, int fg) {
+                  et.setHintTextColor(0x88888888);
+                  et.setTextColor(fg);
+                  et.setSingleLine(true);
+                  et.setPadding(dp(14), dp(10), dp(14), dp(10));
+                  et.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, BOX_R));
+              }
+
               // mode 0 = home page background, 1 = settings menu color, 2 = home frame background
               View bgPageG(final int mode, final int fg) {
                   final String pre = mode == 0 ? "bg" : (mode == 1 ? "m" : "hf");
@@ -4805,7 +4755,7 @@ jobs:
                               v -> removeImgG(mode)));
                   }
 
-                  p.addView(textCard(t("رنگ پس‌زمینه:", "Background color:"), fg, 1f, 14));
+                  p.addView(labelBox(t("رنگ پس‌زمینه:", "Background color:"), fg));
                   HorizontalScrollView hs = new HorizontalScrollView(this);
                   hs.setHorizontalScrollBarEnabled(false);
                   LinearLayout r = new LinearLayout(this);
@@ -4825,7 +4775,7 @@ jobs:
                   hs.addView(r);
                   p.addView(hs);
 
-                  p.addView(textCard(t("انتخاب دلخواه (رنگ و شفافیت):", "Custom color (with transparency):"), fg, 1f, 14));
+                  p.addView(labelBox(t("انتخاب دلخواه (رنگ و شفافیت):", "Custom color (with transparency):"), fg));
                   cp.setColor(curColor(mode));
                   cp.setListener(c -> et.setText(hex(c)));
                   LinearLayout.LayoutParams cpl = new LinearLayout.LayoutParams(-1, -2);
@@ -4835,12 +4785,10 @@ jobs:
                   LinearLayout r2 = new LinearLayout(this);
                   r2.setGravity(Gravity.CENTER_VERTICAL);
                   et.setText(hex(curColor(mode)));
-                  et.setHintTextColor(0x88888888);
-                  et.setTextColor(fg);
-                  et.setSingleLine(true);
-                  et.setPadding(dp(14), dp(10), dp(14), dp(10));
-                  et.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, cardR()));
-                  et.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 2));
+                  styleHexField(et, fg);
+                  LinearLayout.LayoutParams el = new LinearLayout.LayoutParams(0, -2, 2);
+                  el.setMargins(0, dp(8), dp(4), dp(4));
+                  et.setLayoutParams(el);
                   r2.addView(et);
                   r2.addView(btn(t("اعمال", "Apply"), fg, v -> {
                       try { setColorG(mode, Color.parseColor(et.getText().toString().trim())); }
@@ -4849,13 +4797,8 @@ jobs:
                                   Toast.LENGTH_SHORT).show();
                       }
                   }));
-                  LinearLayout.LayoutParams r2l = new LinearLayout.LayoutParams(-1, -2);
-                  r2l.topMargin = dp(8);
-                  p.addView(r2, r2l);
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(p);
-                  return sv;
+                  p.addView(r2);
+                  return wrapScroll(p);
               }
 
               void setBg(int c) {
@@ -4872,7 +4815,7 @@ jobs:
                   LinearLayout p = vbox();
                   p.addView(topBar(t("پس‌زمینه دوک", "Dock background"), fg));
 
-                  p.addView(textCard(t("رنگ پس‌زمینه دوک:", "Dock color:"), fg, 1f, 14));
+                  p.addView(labelBox(t("رنگ پس‌زمینه دوک:", "Dock color:"), fg));
                   HorizontalScrollView hs = new HorizontalScrollView(this);
                   hs.setHorizontalScrollBarEnabled(false);
                   LinearLayout r = new LinearLayout(this);
@@ -4892,7 +4835,7 @@ jobs:
                   hs.addView(r);
                   p.addView(hs);
 
-                  p.addView(textCard(t("انتخاب دلخواه (رنگ و شفافیت):", "Custom color (with transparency):"), fg, 1f, 14));
+                  p.addView(labelBox(t("انتخاب دلخواه (رنگ و شفافیت):", "Custom color (with transparency):"), fg));
                   int cur = sp.getInt("dockBg", 0x40FFFFFF);
                   cp.setColor(cur);
                   cp.setListener(c -> et.setText(hex(c)));
@@ -4903,12 +4846,10 @@ jobs:
                   LinearLayout r2 = new LinearLayout(this);
                   r2.setGravity(Gravity.CENTER_VERTICAL);
                   et.setText(hex(cur));
-                  et.setHintTextColor(0x88888888);
-                  et.setTextColor(fg);
-                  et.setSingleLine(true);
-                  et.setPadding(dp(14), dp(10), dp(14), dp(10));
-                  et.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, cardR()));
-                  et.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 2));
+                  styleHexField(et, fg);
+                  LinearLayout.LayoutParams el = new LinearLayout.LayoutParams(0, -2, 2);
+                  el.setMargins(0, dp(8), dp(4), dp(4));
+                  et.setLayoutParams(el);
                   r2.addView(et);
                   r2.addView(btn(t("اعمال", "Apply"), fg, v -> {
                       try { setDockBg(Color.parseColor(et.getText().toString().trim())); }
@@ -4917,13 +4858,8 @@ jobs:
                                   Toast.LENGTH_SHORT).show();
                       }
                   }));
-                  LinearLayout.LayoutParams r2l = new LinearLayout.LayoutParams(-1, -2);
-                  r2l.topMargin = dp(8);
-                  p.addView(r2, r2l);
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(p);
-                  return sv;
+                  p.addView(r2);
+                  return wrapScroll(p);
               }
 
               void setDockBg(int c) {
@@ -4972,10 +4908,7 @@ jobs:
                   r.addView(row(0xFF66BB6A, "⬆", t("مکان دوک: بالا", "Dock position: Top"), null, pos == 1 ? 1 : 0, fg,
                           v -> { sp.edit().putInt("dockPos1", 1).apply(); show(); }));
 
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return wrapScroll(r);
               }
 
               View iconPage(int fg) {
@@ -5007,10 +4940,7 @@ jobs:
                           hideDock ? 3 : 2, fg,
                           v -> { sp.edit().putBoolean("hideDockNames", !hideDock).apply(); show(); }));
 
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return wrapScroll(r);
               }
 
               View langPage(int fg) {
@@ -5168,6 +5098,8 @@ jobs:
                       loadDock();
                       fixDocked();
                       faceCache.clear();
+                      mbgBlur = null;
+                      mbgBlurSrc = null;
                       dockPage1 = 0;
                       sel.clear();
                       openFolder = null;
@@ -5278,8 +5210,7 @@ jobs:
                       fs = backupDir().listFiles((d, n) -> n.toLowerCase().endsWith(".json"));
                   } catch (Exception e) { }
                   if (fs == null || fs.length == 0) {
-                      r.addView(textCard(t("هیچ نسخه پشتیبانی در پوشه VadLan پیدا نشد", "No backups found in the VadLan folder"),
-                              fg, 0.7f, 14));
+                      r.addView(labelBox(t("هیچ نسخه پشتیبانی در پوشه VadLan پیدا نشد", "No backups found in the VadLan folder"), fg));
                   } else {
                       Arrays.sort(fs, (x, y) -> Long.compare(y.lastModified(), x.lastModified()));
                       for (final File f : fs) {
@@ -5288,10 +5219,7 @@ jobs:
                           r.addView(row(0xFF1E88E5, "💾", f.getName(), when, 0, fg, v -> confirmRestore(f)));
                       }
                   }
-                  ScrollView sv = sview();
-                  sv.setBackgroundColor(pbg());
-                  sv.addView(r);
-                  return sv;
+                  return wrapScroll(r);
               }
 
               // ================= picker =================
@@ -5349,7 +5277,10 @@ jobs:
                   et.setTextColor(fg);
                   et.setSingleLine(true);
                   et.setPadding(dp(14), dp(10), dp(14), dp(10));
-                  et.setBackground(boxBg(light() ? 0x14000000 : 0x1AFFFFFF, cardR()));
+                  GradientDrawable sg = new GradientDrawable();
+                  sg.setCornerRadius(dp(22));
+                  sg.setColor(light() ? 0x14000000 : 0x1AFFFFFF);
+                  et.setBackground(sg);
                   et.addTextChangedListener(new TextWatcher() {
                       public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
                       public void onTextChanged(CharSequence s, int a, int b, int c) { }
@@ -5386,7 +5317,9 @@ jobs:
                   });
                   r.addView(all, new LinearLayout.LayoutParams(-2, -2));
 
-                  ScrollView sv = sview();
+                  ScrollView sv = new ScrollView(this);
+                  sv.setVerticalScrollBarEnabled(false);
+                  sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
                   listBox = new LinearLayout(this);
                   listBox.setOrientation(LinearLayout.VERTICAL);
                   sv.addView(listBox);
@@ -5396,7 +5329,7 @@ jobs:
                   addBtn.setAllCaps(false);
                   addBtn.setTextColor(0xFFFFFFFF);
                   GradientDrawable ag = new GradientDrawable();
-                  ag.setCornerRadius(cardR());
+                  ag.setCornerRadius(dp(22));
                   ag.setColor(0xFF3D7BF7);
                   addBtn.setBackground(ag);
                   addBtn.setOnClickListener(v -> {
